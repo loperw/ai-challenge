@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>DeepSeek Chat</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <main class="app-shell">
+    <section class="chat-panel">
+      <header class="topbar"><div><h1>Новый диалог</h1></div><button id="clearChat" class="ghost-button" title="Очистить диалог">Очистить</button></header>
+      <div id="messages" class="messages" aria-live="polite">
+        <article class="message assistant"><div class="avatar">AI</div><div class="bubble"><p>Здравствуйте! Я готов помочь. Выберите модель справа и отправьте сообщение.</p></div></article>
+      </div>
+      <form id="chatForm" class="composer">
+        <textarea id="prompt" rows="1" placeholder="Напишите сообщение…" aria-label="Сообщение"></textarea>
+        <button id="sendButton" class="send-button" type="submit" aria-label="Отправить"><span>↑</span></button>
+      </form>
+      <p class="hint">Enter — отправить · Shift + Enter — новая строка</p>
+    </section>
+    <aside class="settings-panel">
+      <div class="settings-title"><span class="settings-icon">⚙</span><div><p class="eyebrow">ПАРАМЕТРЫ</p><h2>Настройки</h2></div></div>
+      <label class="field"><span>Модель</span><select id="model"><option value="deepseek-v4-flash">deepseek-v4-flash</option><option value="deepseek-v4-pro">deepseek-v4-pro</option><option value="deepseek-v4-flash-vision-exp">deepseek-v4-flash-vision-exp</option></select></label>
+      <label class="field"><span>Температура <output id="temperatureValue">1.0</output></span><input id="temperature" type="range" min="0" max="2" value="1" step="0.1" /><div class="range-labels"><small>Точнее</small><small>Креативнее</small></div></label>
+    </aside>
+  </main>
+  <script src="app.js"></script>
+</body>
+</html>
