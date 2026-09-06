@@ -25,9 +25,15 @@
     <aside class="settings-panel">
       <div class="settings-title"><span class="settings-icon">⚙</span><div><p class="eyebrow">ПАРАМЕТРЫ</p><h2>Настройки</h2></div></div>
       <label class="field"><span>Модель</span><select id="model"><option value="deepseek-v4-flash">deepseek-v4-flash</option><option value="deepseek-v4-pro">deepseek-v4-pro</option><option value="deepseek-v4-flash-vision-exp">deepseek-v4-flash-vision-exp</option></select></label>
-      <label class="field"><span>Температура <output id="temperatureValue">1.0</output></span><input id="temperature" type="range" min="0" max="2" value="1" step="0.1" /><div class="range-labels"><small>Точнее</small><small>Креативнее</small></div></label>
+      <label class="field format-field" for="jsonMode">
+        <div class="field-heading"><span>JSON-формат ответа</span><span class="format-control"><output id="jsonModeStatus">Выключен</output><span class="switch"><input id="jsonMode" type="checkbox" aria-label="Отвечать в JSON-формате" /><span class="switch-track" aria-hidden="true"></span></span></span></div>
+        <small>JSON-формат: модель вернёт только корректный JSON без пояснений.</small>
+      </label>
+      <label class="field"><span>Количество токенов</span><input id="maxTokens" type="number" min="1" max="384000" step="1" placeholder="Например, 500" inputmode="numeric" /><small>Максимальная длина каждого ответа. Оставьте пустым, чтобы не задавать лимит.</small></label>
+      <label class="field"><span>Условие завершения (stop sequence)</span><input id="stopSequence" type="text" placeholder="Например, ###" /><small>Ответ остановится перед этой последовательностью. Оставьте пустым, чтобы не задавать условие.</small></label>
     </aside>
   </main>
   <script src="app.js"></script>
 </body>
 </html>
+
