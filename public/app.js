@@ -23,6 +23,10 @@ const defaultTemperature = 1;
 let chats = loadChats();
 let activeChatId = chats[0]?.id || createChat();
 
+function selectedProvider() {
+  return modelEl.selectedOptions[0]?.dataset.provider;
+}
+
 function loadChats() {
   try {
     const saved = JSON.parse(sessionStorage.getItem(storageKey));
@@ -33,11 +37,41 @@ function saveChats() {
   sessionStorage.setItem(storageKey, JSON.stringify(chats));
 }
 function createChat() {
-  const chat = { id: crypto.randomUUID(), title: 'Новый чат', messages: [{ role: 'assistant', content: welcomeMessage }], history: [] };
+  const chat = {
+    id: crypto.randomUUID(), title: 'Новый чат',
+    messages: [{ role: 'assistant', content: welcomeMessage }], history: [],
+    model: modelEl.value, provider: selectedProvider(), lastTemperature: defaultTemperature
+  };
   chats.unshift(chat); saveChats(); return chat.id;
 }
 function currentChat() { return chats.find(chat => chat.id === activeChatId); }
-function displayTitle(chat) { return chat.title || 'Новый чат'; }
+function restoreChatModel(chat) {
+  if (!chat?.model) return;
+  const option = [...modelEl.options].find(item => item.value === chat.model && item.dataset.provider === chat.provider);
+  if (option) modelEl.value = option.value;
+}
+function restoreChatTemperature(chat) {
+  const temperature = Number(chat?.lastTemperature);
+  temperatureEl.value = Number.isFinite(temperature) ? temperature : defaultTemperature;
+  setTemperature();
+}
+function modelLabel(chat) {
+  const option = [...modelEl.options].find(item => item.value === chat?.model && item.dataset.provider === chat?.provider);
+  return option?.textContent.trim() || chat?.model || 'Модель не сохранена';
+}
+function chatSettings(chat) {
+  const temperature = Number.isFinite(Number(chat?.lastTemperature)) ? Number(chat.lastTemperature) : defaultTemperature;
+  return { model: modelLabel(chat), temperature };
+}
+function displayTitle(chat) {
+  const firstPrompt = chat?.history?.find(message => message.role === 'user')?.content;
+  if (!firstPrompt) return 'Новый чат';
+  const settings = chatSettings(chat);
+  const prompt = String(chat.title && chat.title !== 'Новый чат' ? chat.title : firstPrompt)
+    .replace(/\s+/g, ' ').slice(0, 42);
+  const parameters = [settings.model, ...(settings.temperature !== defaultTemperature ? [`t=${settings.temperature.toFixed(1)}`] : [])];
+  return [...parameters, prompt].join(' · ');
+}
 function renderHistory() {
   chatHistoryEl.innerHTML = '';
   chats.forEach(chat => {
@@ -51,24 +85,36 @@ function renderHistory() {
 function renderChat() {
   const chat = currentChat();
   if (!chat) return;
+  restoreChatModel(chat);
+  restoreChatTemperature(chat);
   chatTitleEl.textContent = displayTitle(chat);
   setRequestTemperature(chat.lastTemperature);
   messagesEl.innerHTML = '';
   chat.messages.forEach(message => addMessage(message.role, message.content, message.pending));
 }
 function chatTranscript(chat) {
+  const settings = chatSettings(chat);
   const lines = chat.messages
-    .filter(message => !message.pending && message.content)
+    .filter(message => !message.pending && message.content && message.content !== welcomeMessage)
     .map(message => `${message.role === 'user' ? 'Пользователь' : 'Модель'}: ${message.content}`);
-  return `Чат «${displayTitle(chat)}»:\n${lines.join('\n\n')}`;
+  return `Условия запроса: модель — ${settings.model}; температура — ${settings.temperature.toFixed(1)}.\nДиалог:\n${lines.join('\n\n')}`;
 }
-function comparisonPrompt() {
+function comparisonPrompt(chatsToCompare) {
+  const settings = chatsToCompare.map(chatSettings);
+  const models = new Set(settings.map(item => item.model));
+  const temperatures = new Set(settings.map(item => item.temperature));
+  const changedParameters = [
+    ...(models.size > 1 ? ['модель'] : []),
+    ...(temperatures.size > 1 ? ['температура'] : [])
+  ];
   return [
-    'Ты выступаешь независимым экспертом по качеству ответов. Сравни ответы модели во всех предоставленных чатах.',
-    'Определи: 1) отличаются ли ответы по сути, 2) какой подход или ответ наиболее точен, 3) почему. Проверяй фактическую точность и полноту, а не стиль.',
-    'Если исходных данных недостаточно, чтобы подтвердить точность, прямо укажи это и объясни, какой ответ выглядит наиболее обоснованным. Ответь по-русски, структурированно и кратко.',
+    'Ты выступаешь независимым экспертом по качеству ответов. Сравни ответы в приведённых ниже условиях запроса.',
+    changedParameters.length
+      ? `Менялись параметры: ${changedParameters.join(' и ')}. Построй ответ по этим параметрам, а не по номерам или названиям чатов.`
+      : 'Параметры модели и температуры не менялись. Сравни ответы по сути, не вводя номера или названия чатов.',
+    'Для каждого условия явно укажи модель и температуру в формате «Модель …, температура …: результат …». Затем кратко определи различия по сути, точность и полноту. Если данных недостаточно, прямо скажи об этом. Ответь по-русски.',
     '',
-    ...chats.map(chatTranscript)
+    ...chatsToCompare.map(chatTranscript)
   ].join('\n');
 }
 
@@ -87,8 +133,28 @@ function resetTemperature() {
   temperatureEl.value = defaultTemperature;
   setTemperature();
 }
-temperatureEl.addEventListener('input', setTemperature);
-modelEl.addEventListener('change', resetTemperature);
+temperatureEl.addEventListener('input', () => {
+  setTemperature();
+  const chat = currentChat();
+  if (chat) {
+    chat.lastTemperature = Number(temperatureEl.value);
+    saveChats();
+    renderHistory();
+    chatTitleEl.textContent = displayTitle(chat);
+  }
+});
+modelEl.addEventListener('change', () => {
+  const chat = currentChat();
+  if (chat) {
+    chat.model = modelEl.value;
+    chat.provider = selectedProvider();
+    chat.lastTemperature = defaultTemperature;
+    saveChats();
+    renderHistory();
+    chatTitleEl.textContent = displayTitle(chat);
+  }
+  resetTemperature();
+});
 
 function setRequestTemperature(temperature) {
   const value = Number(temperature);
@@ -139,7 +205,8 @@ compareChatsButton.addEventListener('click', async () => {
   try {
     const response = await fetch('/api/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
       model: modelEl.value,
-      messages: [{ role: 'user', content: comparisonPrompt() }],
+      provider: selectedProvider(),
+      messages: [{ role: 'user', content: comparisonPrompt(chatsWithAnswers) }],
       jsonMode: false,
       maxTokens: maxTokensEl.value.trim(),
       stopSequence: stopSequenceEl.value.trim()
@@ -152,7 +219,8 @@ compareChatsButton.addEventListener('click', async () => {
 });
 document.querySelector('#clearChat').addEventListener('click', () => {
   const chat = currentChat(); if (!chat) return;
-  chat.lastTemperature = undefined;
+  chat.lastTemperature = Number(temperatureEl.value);
+  chat.model = modelEl.value; chat.provider = selectedProvider();
   chat.title = 'Новый чат'; chat.history = []; chat.messages = [{ role: 'assistant', content: 'Диалог очищен. Чем могу помочь?' }];
   saveChats(); renderChat(); renderHistory();
 });
@@ -172,6 +240,8 @@ form.addEventListener('submit', async event => {
     stopSequence: stopSequenceEl.value.trim()
   };
   const chat = currentChat(); if (!chat) return;
+  chat.model = modelEl.value;
+  chat.provider = selectedProvider();
   chat.lastTemperature = settings.temperature;
   setRequestTemperature(settings.temperature);
   const userMessage = { role: 'user', content: text };
@@ -187,6 +257,7 @@ form.addEventListener('submit', async event => {
   try {
     const response = await fetch('/api/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
       model: modelEl.value,
+      provider: selectedProvider(),
       messages: chat.history,
       ...settings
     }) });
