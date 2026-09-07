@@ -28,15 +28,39 @@ async function readBody(request) {
 const server = http.createServer(async (request, response) => {
   if (request.method === 'POST' && request.url === '/api/chat') {
     try {
-      const { model, messages, temperature } = await readBody(request);
+      const { model, messages, jsonMode, temperature, maxTokens, stopSequence } = await readBody(request);
       const apiKey = process.env.DEEPSEEK_API_KEY;
       if (!apiKey) return sendJson(response, 500, { error: 'В локальном файле .env не задан DEEPSEEK_API_KEY.' });
       if (!Array.isArray(messages) || !messages.length) return sendJson(response, 400, { error: 'Добавьте сообщение.' });
 
+      const parsedMaxTokens = maxTokens === '' || maxTokens === undefined ? undefined : Number(maxTokens);
+      if (parsedMaxTokens !== undefined && (!Number.isInteger(parsedMaxTokens) || parsedMaxTokens < 1 || parsedMaxTokens > 384000)) {
+        return sendJson(response, 400, { error: 'Количество токенов должно быть целым числом от 1 до 384000.' });
+      }
+      const parsedTemperature = temperature === '' || temperature === undefined ? 1 : Number(temperature);
+      if (!Number.isFinite(parsedTemperature) || parsedTemperature < 0 || parsedTemperature > 2) {
+        return sendJson(response, 400, { error: 'Температура для моделей DeepSeek должна быть числом от 0 до 2.' });
+      }
+      const stop = typeof stopSequence === 'string' ? stopSequence.trim() : '';
+      const requestMessages = jsonMode
+        ? [{ role: 'system', content: 'Формат ответа: строгий JSON. Верни строго один валидный JSON-объект. Не добавляй Markdown, пояснения или текст вне JSON. Никогда не помещай JSON-объект в строковое поле другого JSON-объекта и не экранируй его. Пример JSON-ответа: {"answer":"текст ответа"}.' }, ...messages]
+        : messages;
+      const requestBody = {
+        model: model || 'deepseek-v4-flash',
+        messages: requestMessages,
+        temperature: parsedTemperature,
+        // DeepSeek ignores temperature while thinking is enabled, so always disable it.
+        thinking: { type: 'disabled' },
+        stream: true,
+        ...(parsedMaxTokens !== undefined && { max_tokens: parsedMaxTokens }),
+        ...(stop && { stop: [stop] }),
+        ...(jsonMode && { response_format: { type: 'json_object' } })
+      };
+
       const upstream = await fetch('https://api.deepseek.com/chat/completions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
-        body: JSON.stringify({ model: model || 'deepseek-v4-flash', messages, temperature: Number(temperature) || 1, stream: true })
+        body: JSON.stringify(requestBody)
       });
       if (!upstream.ok) {
         const payload = await upstream.json();
@@ -55,7 +79,10 @@ const server = http.createServer(async (request, response) => {
   if (!safePath.startsWith(publicDir)) return sendJson(response, 403, { error: 'Forbidden' });
   fs.readFile(safePath, (error, data) => {
     if (error) return sendJson(response, 404, { error: 'Not found' });
-    response.writeHead(200, { 'Content-Type': mimeTypes[path.extname(safePath)] || 'application/octet-stream' });
+    response.writeHead(200, {
+      'Content-Type': mimeTypes[path.extname(safePath)] || 'application/octet-stream',
+      'Cache-Control': 'no-cache'
+    });
     response.end(data);
   });
 });
