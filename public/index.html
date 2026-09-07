@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>DeepSeek Chat</title>
+  <title>AI Chat</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&display=swap" rel="stylesheet" />
@@ -32,8 +32,22 @@
     </section>
     <aside class="settings-panel">
       <div class="settings-title"><span class="settings-icon">⚙</span><div><p class="eyebrow">ПАРАМЕТРЫ</p><h2>Настройки</h2></div></div>
-      <label class="field"><span>Модель</span><select id="model"><option value="deepseek-v4-flash">deepseek-v4-flash</option><option value="deepseek-v4-pro">deepseek-v4-pro</option><option value="deepseek-v4-flash-vision-exp">deepseek-v4-flash-vision-exp</option></select></label>
-      <label class="field"><span>Температура <output id="temperatureValue">1.0</output></span><input id="temperature" type="range" min="0" max="2" value="1" step="0.1" aria-describedby="temperatureHint" /><div class="range-labels"><small>Точнее</small><small>Креативнее</small></div><small id="temperatureHint">Для моделей DeepSeek: от 0 до 2.</small></label>
+      <label class="field"><span>Модель</span><select id="model">
+        <optgroup label="DeepSeek">
+          <option value="deepseek-v4-flash" data-provider="deepseek">deepseek-v4-flash</option>
+          <option value="deepseek-v4-pro" data-provider="deepseek">deepseek-v4-pro</option>
+          <option value="deepseek-v4-flash-vision-exp" data-provider="deepseek">deepseek-v4-flash-vision-exp</option>
+        </optgroup>
+        <optgroup label="OpenRouter — бесплатно">
+          <option value="openrouter/free" data-provider="openrouter">Автовыбор бесплатной модели</option>
+          <option value="minimax/minimax-m3:free" data-provider="openrouter">MiniMax M3 (free)</option>
+        </optgroup>
+        <optgroup label="Gemini 3.5">
+          <option value="gemini-3.5-flash-lite" data-provider="gemini">Gemini 3.5 Flash-Lite</option>
+          <option value="gemini-3.5-flash" data-provider="gemini">Gemini 3.5 Flash</option>
+        </optgroup>
+      </select></label>
+      <label class="field"><span>Температура <output id="temperatureValue">1.0</output></span><input id="temperature" type="range" min="0" max="2" value="1" step="0.1" aria-describedby="temperatureHint" /><div class="range-labels"><small>Точнее</small><small>Креативнее</small></div><small id="temperatureHint">Для всех моделей: от 0 до 2.</small></label>
       <label class="field format-field" for="jsonMode">
         <div class="field-heading"><span>JSON-формат ответа</span><span class="format-control"><output id="jsonModeStatus">Выключен</output><span class="switch"><input id="jsonMode" type="checkbox" aria-label="Отвечать в JSON-формате" /><span class="switch-track" aria-hidden="true"></span></span></span></div>
         <small>JSON-формат: модель вернёт только корректный JSON без пояснений.</small>
