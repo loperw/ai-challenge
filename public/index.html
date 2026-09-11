@@ -17,13 +17,13 @@
       </div>
       <div class="history-label">ИСТОРИЯ ЧАТОВ</div>
       <nav id="chatHistory" class="chat-history" aria-label="Список чатов"></nav>
-      <p class="history-note">Диалоги хранятся до закрытия вкладки.</p>
+      <p class="history-note">Диалоги сохраняются между перезапусками.</p>
+      <button id="clearAll" class="compare-button" type="button">Очистить всё</button>
       <button id="compareChats" class="compare-button" type="button">Сравнение ответов</button>
     </aside>
     <section class="chat-panel">
       <header class="topbar"><div><h1 id="chatTitle">Новый чат</h1></div><button id="clearChat" class="ghost-button" title="Очистить диалог">Очистить</button></header>
       <div id="messages" class="messages" aria-live="polite"></div>
-      <p id="requestTemperature" class="request-temperature" hidden></p>
       <form id="chatForm" class="composer">
         <textarea id="prompt" rows="1" placeholder="Напишите сообщение…" aria-label="Сообщение"></textarea>
         <button id="sendButton" class="send-button" type="submit" aria-label="Отправить"><span>↑</span></button>
@@ -45,13 +45,10 @@
           <option value="gemini-3.5-flash" data-provider="gemini">Gemini 3.5 Flash</option>
         </optgroup>
       </select></label>
-      <label class="field"><span>Температура <output id="temperatureValue">1.0</output></span><input id="temperature" type="range" min="0" max="2" value="1" step="0.1" aria-describedby="temperatureHint" /><div class="range-labels"><small>Точнее</small><small>Креативнее</small></div><small id="temperatureHint">Для всех моделей: от 0 до 2.</small></label>
       <label class="field format-field" for="jsonMode">
         <div class="field-heading"><span>JSON-формат ответа</span><span class="format-control"><output id="jsonModeStatus">Выключен</output><span class="switch"><input id="jsonMode" type="checkbox" aria-label="Отвечать в JSON-формате" /><span class="switch-track" aria-hidden="true"></span></span></span></div>
         <small>JSON-формат: модель вернёт только корректный JSON без пояснений.</small>
       </label>
-      <label class="field"><span>Количество токенов</span><input id="maxTokens" type="number" min="1" max="384000" step="1" placeholder="Например, 500" inputmode="numeric" /><small>Максимальная длина каждого ответа. Оставьте пустым, чтобы не задавать лимит.</small></label>
-      <label class="field"><span>Условие завершения (stop sequence)</span><input id="stopSequence" type="text" placeholder="Например, ###" /><small>Ответ остановится перед этой последовательностью. Оставьте пустым, чтобы не задавать условие.</small></label>
     </aside>
   </main>
   <div id="comparisonModal" class="modal" hidden role="dialog" aria-modal="true" aria-labelledby="comparisonTitle">

@@ -2,12 +2,8 @@ const messagesEl = document.querySelector('#messages');
 const form = document.querySelector('#chatForm');
 const promptEl = document.querySelector('#prompt');
 const modelEl = document.querySelector('#model');
-const temperatureEl = document.querySelector('#temperature');
-const temperatureValueEl = document.querySelector('#temperatureValue');
 const jsonModeEl = document.querySelector('#jsonMode');
 const jsonModeStatusEl = document.querySelector('#jsonModeStatus');
-const maxTokensEl = document.querySelector('#maxTokens');
-const stopSequenceEl = document.querySelector('#stopSequence');
 const sendButton = document.querySelector('#sendButton');
 const chatTitleEl = document.querySelector('#chatTitle');
 const chatHistoryEl = document.querySelector('#chatHistory');
@@ -16,7 +12,6 @@ const compareChatsButton = document.querySelector('#compareChats');
 const comparisonModal = document.querySelector('#comparisonModal');
 const comparisonResult = document.querySelector('#comparisonResult');
 const closeComparisonButton = document.querySelector('#closeComparison');
-const requestTemperatureEl = document.querySelector('#requestTemperature');
 const welcomeMessage = 'Здравствуйте! Я готов помочь. Выберите модель справа и отправьте сообщение.';
 const storageKey = 'deepseek-chat-conversations';
 const defaultTemperature = 1;
@@ -29,12 +24,12 @@ function selectedProvider() {
 
 function loadChats() {
   try {
-    const saved = JSON.parse(sessionStorage.getItem(storageKey));
+    const saved = JSON.parse(localStorage.getItem(storageKey));
     return Array.isArray(saved) ? saved.filter(chat => chat?.id && Array.isArray(chat.messages)) : [];
   } catch { return []; }
 }
 function saveChats() {
-  sessionStorage.setItem(storageKey, JSON.stringify(chats));
+  localStorage.setItem(storageKey, JSON.stringify(chats));
 }
 function createChat() {
   const chat = {
@@ -50,11 +45,7 @@ function restoreChatModel(chat) {
   const option = [...modelEl.options].find(item => item.value === chat.model && item.dataset.provider === chat.provider);
   if (option) modelEl.value = option.value;
 }
-function restoreChatTemperature(chat) {
-  const temperature = Number(chat?.lastTemperature);
-  temperatureEl.value = Number.isFinite(temperature) ? temperature : defaultTemperature;
-  setTemperature();
-}
+
 function modelLabel(chat) {
   const option = [...modelEl.options].find(item => item.value === chat?.model && item.dataset.provider === chat?.provider);
   return option?.textContent.trim() || chat?.model || 'Модель не сохранена';
@@ -65,32 +56,66 @@ function chatSettings(chat) {
 }
 function displayTitle(chat) {
   const firstPrompt = chat?.history?.find(message => message.role === 'user')?.content;
-  if (!firstPrompt) return 'Новый чат';
-  const settings = chatSettings(chat);
+  if (!firstPrompt) return 'Новый чат · 0 сообщений';
   const prompt = String(chat.title && chat.title !== 'Новый чат' ? chat.title : firstPrompt)
     .replace(/\s+/g, ' ').slice(0, 42);
-  const parameters = [settings.model, ...(settings.temperature !== defaultTemperature ? [`t=${settings.temperature.toFixed(1)}`] : [])];
-  return [...parameters, prompt].join(' · ');
+  return `${prompt} · ${chat.history.length} сообщений`;
+}
+function renderChatTitle(chat) {
+  const title = document.createElement('span');
+  title.textContent = displayTitle(chat).replace(/ · \d+ сообщений$/, '');
+  const count = document.createElement('span');
+  count.className = 'chat-memory-count';
+  count.textContent = ' · ' + (chat.history?.length || 0) + ' сообщений';
+  chatTitleEl.replaceChildren(title, count);
 }
 function renderHistory() {
   chatHistoryEl.innerHTML = '';
   chats.forEach(chat => {
     const button = document.createElement('button');
     button.type = 'button'; button.className = `history-chat${chat.id === activeChatId ? ' active' : ''}`;
-    button.title = displayTitle(chat); button.textContent = displayTitle(chat);
+    button.title = displayTitle(chat);
+    const label = document.createElement('span'); label.className = 'history-chat-title';
+    label.textContent = displayTitle(chat).replace(/ · \d+ сообщений$/, '');
+    const count = document.createElement('span'); count.className = 'memory-count';
+    count.textContent = String(chat.history?.length || 0); count.title = 'Сообщений в памяти';
+    button.append(label, count);
     button.addEventListener('click', () => { activeChatId = chat.id; renderChat(); renderHistory(); });
-    chatHistoryEl.append(button);
+    const row = document.createElement('div');
+    row.className = 'history-chat-row';
+    const remove = document.createElement('button');
+    remove.type = 'button'; remove.className = 'delete-chat'; remove.textContent = '×';
+    remove.title = 'Удалить чат';
+    remove.setAttribute('aria-label', 'Удалить чат: ' + label.textContent);
+    remove.disabled = chat.messages.some(message => message.pending);
+    remove.addEventListener('click', async () => {
+      remove.disabled = true;
+      try {
+        const response = await apiFetch('/api/chat/reset', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ conversationId: chat.id })
+        });
+        if (!response.ok) throw new Error((await response.json()).error || 'Не удалось удалить чат.');
+        chats = chats.filter(item => item.id !== chat.id);
+        if (activeChatId === chat.id) {
+          activeChatId = chats[0]?.id || createChat();
+          renderChat();
+        }
+        saveChats(); renderHistory();
+      } catch (error) { window.alert(error.message); remove.disabled = false; }
+    });
+    row.append(button, remove);
+    chatHistoryEl.append(row);
   });
 }
 function renderChat() {
   const chat = currentChat();
   if (!chat) return;
   restoreChatModel(chat);
-  restoreChatTemperature(chat);
-  chatTitleEl.textContent = displayTitle(chat);
-  setRequestTemperature(chat.lastTemperature);
+  renderChatTitle(chat);
   messagesEl.innerHTML = '';
   chat.messages.forEach(message => addMessage(message.role, message.content, message.pending));
+  messagesEl.scrollTop = messagesEl.scrollHeight;
 }
 function chatTranscript(chat) {
   const settings = chatSettings(chat);
@@ -123,26 +148,6 @@ function setJsonModeStatus() {
 }
 jsonModeEl.addEventListener('change', setJsonModeStatus);
 
-function setTemperature() {
-  const value = Number(temperatureEl.value);
-  const percentage = ((value - Number(temperatureEl.min)) / (Number(temperatureEl.max) - Number(temperatureEl.min))) * 100;
-  temperatureValueEl.value = value.toFixed(1);
-  temperatureEl.style.background = `linear-gradient(90deg, var(--accent) ${percentage}%, #e2e3ea ${percentage}%)`;
-}
-function resetTemperature() {
-  temperatureEl.value = defaultTemperature;
-  setTemperature();
-}
-temperatureEl.addEventListener('input', () => {
-  setTemperature();
-  const chat = currentChat();
-  if (chat) {
-    chat.lastTemperature = Number(temperatureEl.value);
-    saveChats();
-    renderHistory();
-    chatTitleEl.textContent = displayTitle(chat);
-  }
-});
 modelEl.addEventListener('change', () => {
   const chat = currentChat();
   if (chat) {
@@ -151,23 +156,18 @@ modelEl.addEventListener('change', () => {
     chat.lastTemperature = defaultTemperature;
     saveChats();
     renderHistory();
-    chatTitleEl.textContent = displayTitle(chat);
+    renderChatTitle(chat);
   }
-  resetTemperature();
+
 });
 
-function setRequestTemperature(temperature) {
-  const value = Number(temperature);
-  const shouldShow = Number.isFinite(value) && value !== defaultTemperature;
-  requestTemperatureEl.hidden = !shouldShow;
-  requestTemperatureEl.textContent = shouldShow ? `temperature — ${value.toFixed(1)}` : '';
-}
+
 
 function addMessage(role, content, pending = false) {
   const item = document.createElement('article'); item.className = `message ${role}`;
   const avatar = document.createElement('div'); avatar.className = 'avatar'; avatar.textContent = role === 'assistant' ? 'AI' : 'Я';
   const bubble = document.createElement('div'); bubble.className = `bubble${pending ? ' typing' : ''}`; bubble.textContent = content;
-  item.append(avatar, bubble); messagesEl.append(item); item.scrollIntoView({ behavior: 'smooth', block: 'end' }); return item;
+  item.append(avatar, bubble); messagesEl.append(item); return item;
 }
 async function apiFetch(path, options) {
   try {
@@ -185,7 +185,7 @@ async function readStream(response, onToken) {
   let buffer = '';
   while (true) {
     const { value, done } = await reader.read();
-    if (done) break;
+    if (done) throw new Error('Соединение прервано до сохранения ответа.');
     buffer += decoder.decode(value, { stream: true });
     const lines = buffer.split('\n');
     buffer = lines.pop();
@@ -200,7 +200,7 @@ async function readStream(response, onToken) {
     }
   }
 }
-newChatButton.addEventListener('click', () => { activeChatId = createChat(); resetTemperature(); renderChat(); renderHistory(); promptEl.focus(); });
+newChatButton.addEventListener('click', () => { activeChatId = createChat();  renderChat(); renderHistory(); promptEl.focus(); });
 closeComparisonButton.addEventListener('click', () => { comparisonModal.hidden = true; });
 comparisonModal.addEventListener('click', event => { if (event.target === comparisonModal) comparisonModal.hidden = true; });
 compareChatsButton.addEventListener('click', async () => {
@@ -220,9 +220,8 @@ compareChatsButton.addEventListener('click', async () => {
       message: comparisonPrompt(chatsWithAnswers),
       ephemeral: true,
       jsonMode: false,
-      temperature: Number(temperatureEl.value),
-      maxTokens: maxTokensEl.value.trim(),
-      stopSequence: stopSequenceEl.value.trim()
+      temperature: defaultTemperature,
+
     }) });
     if (!response.ok) { const data = await response.json(); throw new Error(data.error || 'Ошибка соединения'); }
     await readStream(response, token => { result += token; comparisonResult.textContent = result; });
@@ -238,45 +237,37 @@ document.querySelector('#clearChat').addEventListener('click', async event => {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ conversationId: chat.id })
     });
     if (!response.ok) { const data = await response.json(); throw new Error(data.error || 'Ошибка соединения'); }
-    chat.lastTemperature = Number(temperatureEl.value);
+    chat.lastTemperature = defaultTemperature;
     chat.model = modelEl.value; chat.provider = selectedProvider();
     chat.title = 'Новый чат'; chat.history = []; chat.messages = [{ role: 'assistant', content: 'Диалог очищен. Чем могу помочь?' }];
     saveChats(); renderChat(); renderHistory();
   } catch (error) {
     window.alert(`Не удалось очистить диалог: ${error.message}`);
   } finally {
-    event.currentTarget.disabled = false;
+    document.querySelector('#clearChat').disabled = false;
   }
 });
 promptEl.addEventListener('input', () => { promptEl.style.height = 'auto'; promptEl.style.height = `${Math.min(promptEl.scrollHeight, 160)}px`; });
 promptEl.addEventListener('keydown', event => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); form.requestSubmit(); } });
 form.addEventListener('submit', async event => {
-  event.preventDefault(); const text = promptEl.value.trim(); if (!text) return;
-  const maxTokens = maxTokensEl.value.trim();
-  if (maxTokens && (!Number.isInteger(Number(maxTokens)) || Number(maxTokens) < 1 || Number(maxTokens) > 384000)) {
-    maxTokensEl.focus();
-    return;
-  }
+  event.preventDefault(); if (sendButton.disabled) return; const text = promptEl.value.trim(); if (!text) return;
   const settings = {
     jsonMode: jsonModeEl.checked,
-    temperature: Number(temperatureEl.value),
-    maxTokens,
-    stopSequence: stopSequenceEl.value.trim()
+    temperature: defaultTemperature,
+
   };
   const chat = currentChat(); if (!chat) return;
   chat.model = modelEl.value;
   chat.provider = selectedProvider();
   chat.lastTemperature = settings.temperature;
-  setRequestTemperature(settings.temperature);
   const userMessage = { role: 'user', content: text };
   chat.messages.push(userMessage); chat.history.push(userMessage);
   if (chat.title === 'Новый чат') chat.title = text.replace(/\s+/g, ' ').slice(0, 42);
   const assistantMessage = { role: 'assistant', content: '', pending: true };
   chat.messages.push(assistantMessage); saveChats();
   const isActive = () => activeChatId === chat.id;
-  let pending;
-  if (isActive()) { addMessage('user', text); pending = addMessage('assistant', '', true); }
-  promptEl.value = ''; promptEl.style.height = 'auto'; sendButton.disabled = true; renderHistory(); chatTitleEl.textContent = displayTitle(chat);
+  if (isActive()) { addMessage('user', text); addMessage('assistant', '', true); messagesEl.scrollTop = messagesEl.scrollHeight; }
+  promptEl.value = ''; promptEl.style.height = 'auto'; sendButton.disabled = true; renderHistory(); renderChatTitle(chat);
   let answer = '';
   try {
     const response = await apiFetch('/api/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
@@ -289,18 +280,57 @@ form.addEventListener('submit', async event => {
     if (!response.ok) { const data = await response.json(); throw new Error(data.error || 'Ошибка соединения'); }
     await readStream(response, token => {
       answer += token; assistantMessage.content = answer;
-      if (isActive() && pending) { const answerBubble = pending.querySelector('.bubble'); answerBubble.textContent = answer; pending.scrollIntoView({ behavior: 'smooth', block: 'end' }); }
+      if (isActive()) {
+        const follow = messagesEl.scrollHeight - messagesEl.scrollTop - messagesEl.clientHeight < 80;
+        messagesEl.lastElementChild.querySelector('.bubble').textContent = answer;
+        if (follow) messagesEl.scrollTop = messagesEl.scrollHeight;
+      }
     });
     if (!answer) throw new Error('Сервис не вернул текст ответа.');
     chat.history.push({ role: 'assistant', content: answer });
-  } catch (error) { assistantMessage.content = `Ошибка: ${error.message}`; }
+  } catch (error) { chat.history.pop(); assistantMessage.content = `Ошибка: ${error.message}`; }
   finally {
     assistantMessage.pending = false; saveChats();
-    if (isActive()) { renderChat(); renderHistory(); promptEl.focus(); }
+    if (isActive()) {
+      const follow = messagesEl.scrollHeight - messagesEl.scrollTop - messagesEl.clientHeight < 80;
+      const bubble = messagesEl.lastElementChild.querySelector('.bubble');
+      bubble.textContent = assistantMessage.content;
+      bubble.classList.remove('typing');
+      if (follow) messagesEl.scrollTop = messagesEl.scrollHeight;
+      renderChatTitle(chat);
+      promptEl.focus({ preventScroll: true });
+    }
+    renderHistory();
     sendButton.disabled = false;
   }
 });
 
-renderChat();
-renderHistory();
-setTemperature();
+
+document.querySelector('#clearAll').addEventListener('click', async () => {
+  const button = document.querySelector('#clearAll'); button.disabled = true;
+  try {
+    const response = await apiFetch('/api/chats/clear', { method: 'POST' });
+    if (!response.ok) throw new Error((await response.json()).error);
+    localStorage.removeItem(storageKey); sessionStorage.removeItem(storageKey);
+    chats = []; activeChatId = createChat();
+    comparisonResult.textContent = ''; comparisonModal.hidden = true;
+    promptEl.value = ''; renderChat(); renderHistory();
+  } catch (error) { window.alert(error.message); }
+  finally { button.disabled = false; }
+});
+async function initialize() {
+  sendButton.disabled = true;
+  try {
+    const response = await apiFetch('/api/chats');
+    if (!response.ok) throw new Error('Не удалось загрузить историю.');
+    const data = await response.json();
+    chats = data.chats.map(chat => ({
+      id: chat.id, title: chat.messages.find(message => message.role === 'user')?.content.slice(0, 42) || 'Новый чат',
+      messages: chat.messages, history: [...chat.messages],
+      model: chat.settings.model, provider: chat.settings.provider, lastTemperature: chat.settings.temperature
+    }));
+    activeChatId = chats[0]?.id || createChat();
+    saveChats(); renderChat(); renderHistory(); sendButton.disabled = false;
+  } catch (error) { addMessage('assistant', error.message + ' Перезагрузите страницу для повторной попытки.'); }
+}
+initialize();

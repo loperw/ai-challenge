@@ -100,3 +100,52 @@ test('Agent validates the canonical DeepSeek V4.1 API model', () => {
   assert.doesNotThrow(() => new Agent(deepSeekSettings()));
   assert.throws(() => new Agent(deepSeekSettings({ model: 'deepseek-v4-flash' })), AgentError);
 });
+const { mkdtempSync, rmSync, readFileSync } = require('node:fs');
+const { tmpdir } = require('node:os');
+const { join } = require('node:path');
+const { HistoryStore } = require('../history-store');
+
+test('saved conversations survive restart and continue with previous messages', async t => {
+  const dir = mkdtempSync(join(tmpdir(), 'agent-history-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const file = join(dir, 'conversations.json');
+  const registry = new AgentRegistry({ store: new HistoryStore(file) });
+  const agent = registry.get('chat-1', deepSeekSettings());
+  agent.createCompletion = async () => ({ provider: 'deepseek', body: streamResponse(['Привет']).body });
+  await agent.respond('Меня зовут Артем');
+  const restarted = new AgentRegistry({ store: new HistoryStore(file) });
+  const restored = restarted.get('chat-1', deepSeekSettings());
+  assert.deepEqual(restored.messages, agent.messages);
+  restored.createCompletion = async () => {
+    assert.equal(restored.messages[0].content, 'Меня зовут Артем');
+    assert.equal(restored.messages.length, 3);
+    return { provider: 'deepseek', body: streamResponse(['Артем']).body };
+  };
+  await restored.respond('Как меня зовут?');
+  assert.equal(new HistoryStore(file).chats['chat-1'].messages.length, 4);
+  restored.createCompletion = async () => { throw new Error('offline'); };
+  await assert.rejects(restored.respond('failed'));
+  assert.equal(new HistoryStore(file).chats['chat-1'].messages.length, 4);
+  restarted.reset('chat-1');
+  assert.deepEqual(new HistoryStore(file).list(), []);
+});
+
+test('clear all removes persisted and loaded histories and refuses busy agents', async t => {
+  const dir = mkdtempSync(join(tmpdir(), 'agent-clear-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const file = join(dir, 'conversations.json');
+  const store = new HistoryStore(file);
+  store.save('one', deepSeekSettings(), [{ role: 'user', content: 'secret' }]);
+  store.save('two', deepSeekSettings(), [{ role: 'user', content: 'other' }]);
+  const registry = new AgentRegistry({ store });
+  const agent = registry.get('one', deepSeekSettings());
+  agent.busy = true;
+  assert.throws(() => registry.clear(), error => error.status === 409);
+  assert.equal(new HistoryStore(file).list().length, 2);
+  agent.busy = false;
+  registry.clear();
+  assert.equal(registry.agents.size, 0);
+  assert.deepEqual(new HistoryStore(file).list(), []);
+  assert.equal(readFileSync(file, 'utf8'), '{}');
+  assert.deepEqual(registry.get('one', deepSeekSettings()).messages, []);
+});

@@ -15,7 +15,9 @@ if (fs.existsSync(envPath)) {
   }
 }
 
-const agents = new AgentRegistry();
+const { HistoryStore } = require('./history-store');
+const store = new HistoryStore(path.join(__dirname, 'data', 'conversations.json'));
+const agents = new AgentRegistry({ store });
 
 function sendJson(response, status, data) {
   response.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' });
@@ -89,6 +91,11 @@ async function handleReset(request, response) {
 }
 
 const server = http.createServer(async (request, response) => {
+  if (request.method === 'GET' && request.url === '/api/chats') return sendJson(response, 200, { chats: store.list() });
+  if (request.method === 'POST' && request.url === '/api/chats/clear') {
+    try { agents.clear(); return sendJson(response, 200, { ok: true }); }
+    catch (error) { return sendJson(response, error.status || 500, { error: error.message }); }
+  }
   if (request.method === 'POST' && request.url === '/api/chat') return handleChat(request, response);
   if (request.method === 'POST' && request.url === '/api/chat/reset') return handleReset(request, response);
 

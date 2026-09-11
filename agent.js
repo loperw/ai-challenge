@@ -80,10 +80,11 @@ function validatedSettings(settings) {
 }
 
 class Agent {
-  constructor(settings, { fetchImpl = globalThis.fetch } = {}) {
+  constructor(settings, { fetchImpl = globalThis.fetch, messages = [], persist = () => {} } = {}) {
     if (typeof fetchImpl !== 'function') throw new Error('Для агента необходим fetch.');
     this.fetch = fetchImpl;
-    this.messages = [];
+    this.messages = messages.map(message => ({ ...message }));
+    this.persist = persist;
     this.busy = false;
     this.configure(settings);
   }
@@ -121,6 +122,7 @@ class Agent {
       }
       if (!answer) throw new AgentError('Сервис не вернул текст ответа.', 502);
       this.messages.push({ role: 'assistant', content: answer });
+      this.persist(this.settings, this.messages);
       return answer;
     } catch (error) {
       this.messages.length = historyLength;
@@ -222,7 +224,10 @@ class AgentRegistry {
   get(conversationId, settings) {
     let agent = this.agents.get(conversationId);
     if (!agent) {
-      agent = new Agent(settings, this.options);
+      agent = new Agent(settings, { ...this.options,
+        messages: this.options.store?.chats[conversationId]?.messages || [],
+        persist: (configuration, messages) => this.options.store?.save(conversationId, configuration, messages)
+      });
       this.agents.set(conversationId, agent);
     } else {
       agent.configure(settings);
@@ -230,8 +235,16 @@ class AgentRegistry {
     return agent;
   }
 
+  clear() {
+    if ([...this.agents.values()].some(agent => agent.busy)) throw new AgentError('Дождитесь завершения ответов.', 409);
+    this.options.store?.clear();
+    this.agents.clear();
+  }
+
   reset(conversationId) {
     const agent = this.agents.get(conversationId);
+    if (agent?.busy) throw new AgentError('Дождитесь завершения ответа.', 409);
+    this.options.store?.remove(conversationId);
     if (agent) agent.reset();
   }
 }
