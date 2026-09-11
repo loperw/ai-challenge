@@ -169,6 +169,16 @@ function addMessage(role, content, pending = false) {
   const bubble = document.createElement('div'); bubble.className = `bubble${pending ? ' typing' : ''}`; bubble.textContent = content;
   item.append(avatar, bubble); messagesEl.append(item); item.scrollIntoView({ behavior: 'smooth', block: 'end' }); return item;
 }
+async function apiFetch(path, options) {
+  try {
+    return await fetch(path, options);
+  } catch (error) {
+    if (error instanceof TypeError) {
+      throw new Error('Сервер недоступен. Запустите его командой «node server.js» и откройте http://localhost:3000.');
+    }
+    throw error;
+  }
+}
 async function readStream(response, onToken) {
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
@@ -184,6 +194,7 @@ async function readStream(response, onToken) {
       const data = line.slice(5).trim();
       if (data === '[DONE]') return;
       const chunk = JSON.parse(data);
+      if (chunk.error) throw new Error(chunk.error);
       const token = chunk.choices?.[0]?.delta?.content;
       if (token) onToken(token);
     }
@@ -203,11 +214,13 @@ compareChatsButton.addEventListener('click', async () => {
   compareChatsButton.disabled = true;
   let result = '';
   try {
-    const response = await fetch('/api/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
+    const response = await apiFetch('/api/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
       model: modelEl.value,
       provider: selectedProvider(),
-      messages: [{ role: 'user', content: comparisonPrompt(chatsWithAnswers) }],
+      message: comparisonPrompt(chatsWithAnswers),
+      ephemeral: true,
       jsonMode: false,
+      temperature: Number(temperatureEl.value),
       maxTokens: maxTokensEl.value.trim(),
       stopSequence: stopSequenceEl.value.trim()
     }) });
@@ -217,12 +230,23 @@ compareChatsButton.addEventListener('click', async () => {
   } catch (error) { comparisonResult.textContent = `Не удалось выполнить сравнение: ${error.message}`; }
   finally { compareChatsButton.disabled = false; }
 });
-document.querySelector('#clearChat').addEventListener('click', () => {
+document.querySelector('#clearChat').addEventListener('click', async event => {
   const chat = currentChat(); if (!chat) return;
-  chat.lastTemperature = Number(temperatureEl.value);
-  chat.model = modelEl.value; chat.provider = selectedProvider();
-  chat.title = 'Новый чат'; chat.history = []; chat.messages = [{ role: 'assistant', content: 'Диалог очищен. Чем могу помочь?' }];
-  saveChats(); renderChat(); renderHistory();
+  event.currentTarget.disabled = true;
+  try {
+    const response = await apiFetch('/api/chat/reset', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ conversationId: chat.id })
+    });
+    if (!response.ok) { const data = await response.json(); throw new Error(data.error || 'Ошибка соединения'); }
+    chat.lastTemperature = Number(temperatureEl.value);
+    chat.model = modelEl.value; chat.provider = selectedProvider();
+    chat.title = 'Новый чат'; chat.history = []; chat.messages = [{ role: 'assistant', content: 'Диалог очищен. Чем могу помочь?' }];
+    saveChats(); renderChat(); renderHistory();
+  } catch (error) {
+    window.alert(`Не удалось очистить диалог: ${error.message}`);
+  } finally {
+    event.currentTarget.disabled = false;
+  }
 });
 promptEl.addEventListener('input', () => { promptEl.style.height = 'auto'; promptEl.style.height = `${Math.min(promptEl.scrollHeight, 160)}px`; });
 promptEl.addEventListener('keydown', event => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); form.requestSubmit(); } });
@@ -255,10 +279,11 @@ form.addEventListener('submit', async event => {
   promptEl.value = ''; promptEl.style.height = 'auto'; sendButton.disabled = true; renderHistory(); chatTitleEl.textContent = displayTitle(chat);
   let answer = '';
   try {
-    const response = await fetch('/api/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
+    const response = await apiFetch('/api/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
+      conversationId: chat.id,
       model: modelEl.value,
       provider: selectedProvider(),
-      messages: chat.history,
+      message: text,
       ...settings
     }) });
     if (!response.ok) { const data = await response.json(); throw new Error(data.error || 'Ошибка соединения'); }
