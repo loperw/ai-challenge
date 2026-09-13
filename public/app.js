@@ -15,6 +15,32 @@ const closeComparisonButton = document.querySelector('#closeComparison');
 const welcomeMessage = 'Здравствуйте! Я готов помочь. Выберите модель справа и отправьте сообщение.';
 const storageKey = 'deepseek-chat-conversations';
 const defaultTemperature = 1;
+const maxTokensEl = document.querySelector('#maxTokens');
+const { estimateTokens, estimateHistory } = TokenCounter;
+
+function renderTokenStats() {
+  const chat = currentChat();
+  if (!chat) return;
+  const stats = chat.tokenStats;
+  const pending = chat.messages.find(message => message.pending);
+  const request = promptEl.value.trim() || chat.history?.findLast(message => message.role === 'user')?.content || '';
+  const display = (id, value) => { document.querySelector(id).textContent = value; };
+  const count = (actual, estimate) => actual != null ? actual.toLocaleString('ru-RU') : estimate != null ? `≈${estimate.toLocaleString('ru-RU')}` : '—';
+  display('#requestTokens', count(null, estimateTokens(request)));
+  display('#historyTokens', count(null, estimateHistory(chat.history) + (pending ? estimateTokens(pending.content) : 0)));
+  display('#inputTokens', pending ? '…' : count(stats?.inputTokens, stats?.inputEstimate));
+  display('#outputTokens', pending ? count(null, estimateTokens(pending.content)) : count(stats?.outputTokens, stats?.outputEstimate));
+  display('#totalTokens', pending ? '…' : count(stats?.totalTokens, stats ? (stats.inputTokens ?? stats.inputEstimate) + (stats.outputTokens ?? stats.outputEstimate) : null));
+  display('#tokenBehavior', pending ? 'Модель отвечает… Оценка обновляется по мере генерации.'
+    : stats?.limited ? `Последний ответ остановлен по лимиту токенов${stats.maxTokens ? ` (задано ${stats.maxTokens})` : ''}. Он может быть неполным; увеличьте лимит и повторите запрос.`
+    : stats ? `Причина завершения: ${stats.finishReason || 'API не сообщил'}. Лимит последнего ответа: ${stats.maxTokens ?? 'по умолчанию модели'}.`
+    : 'Отправьте запрос, чтобы увидеть фактический расход API.');
+}
+maxTokensEl.addEventListener('input', () => {
+  const chat = currentChat();
+  if (chat) { chat.maxTokens = maxTokensEl.value; saveChats(); }
+});
+promptEl.addEventListener('input', renderTokenStats);
 let chats = loadChats();
 let activeChatId = chats[0]?.id || createChat();
 
@@ -112,6 +138,8 @@ function renderChat() {
   const chat = currentChat();
   if (!chat) return;
   restoreChatModel(chat);
+  maxTokensEl.value = chat.maxTokens ?? '';
+  renderTokenStats();
   renderChatTitle(chat);
   messagesEl.innerHTML = '';
   chat.messages.forEach(message => addMessage(message.role, message.content, message.pending));
@@ -179,7 +207,7 @@ async function apiFetch(path, options) {
     throw error;
   }
 }
-async function readStream(response, onToken) {
+async function readStream(response, onToken, onStats = () => {}) {
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
@@ -195,6 +223,7 @@ async function readStream(response, onToken) {
       if (data === '[DONE]') return;
       const chunk = JSON.parse(data);
       if (chunk.error) throw new Error(chunk.error);
+      if (chunk.tokenStats) onStats(chunk.tokenStats);
       const token = chunk.choices?.[0]?.delta?.content;
       if (token) onToken(token);
     }
@@ -240,6 +269,7 @@ document.querySelector('#clearChat').addEventListener('click', async event => {
     chat.lastTemperature = defaultTemperature;
     chat.model = modelEl.value; chat.provider = selectedProvider();
     chat.title = 'Новый чат'; chat.history = []; chat.messages = [{ role: 'assistant', content: 'Диалог очищен. Чем могу помочь?' }];
+    chat.tokenStats = null;
     saveChats(); renderChat(); renderHistory();
   } catch (error) {
     window.alert(`Не удалось очистить диалог: ${error.message}`);
@@ -254,12 +284,13 @@ form.addEventListener('submit', async event => {
   const settings = {
     jsonMode: jsonModeEl.checked,
     temperature: defaultTemperature,
-
+    maxTokens: maxTokensEl.value,
   };
   const chat = currentChat(); if (!chat) return;
   chat.model = modelEl.value;
   chat.provider = selectedProvider();
   chat.lastTemperature = settings.temperature;
+  const previousStats = chat.tokenStats;
   const userMessage = { role: 'user', content: text };
   chat.messages.push(userMessage); chat.history.push(userMessage);
   if (chat.title === 'Новый чат') chat.title = text.replace(/\s+/g, ' ').slice(0, 42);
@@ -268,6 +299,7 @@ form.addEventListener('submit', async event => {
   const isActive = () => activeChatId === chat.id;
   if (isActive()) { addMessage('user', text); addMessage('assistant', '', true); messagesEl.scrollTop = messagesEl.scrollHeight; }
   promptEl.value = ''; promptEl.style.height = 'auto'; sendButton.disabled = true; renderHistory(); renderChatTitle(chat);
+  renderTokenStats();
   let answer = '';
   try {
     const response = await apiFetch('/api/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
@@ -281,14 +313,15 @@ form.addEventListener('submit', async event => {
     await readStream(response, token => {
       answer += token; assistantMessage.content = answer;
       if (isActive()) {
+        renderTokenStats();
         const follow = messagesEl.scrollHeight - messagesEl.scrollTop - messagesEl.clientHeight < 80;
         messagesEl.lastElementChild.querySelector('.bubble').textContent = answer;
         if (follow) messagesEl.scrollTop = messagesEl.scrollHeight;
       }
-    });
+    }, stats => { chat.tokenStats = stats; });
     if (!answer) throw new Error('Сервис не вернул текст ответа.');
     chat.history.push({ role: 'assistant', content: answer });
-  } catch (error) { chat.history.pop(); assistantMessage.content = `Ошибка: ${error.message}`; }
+  } catch (error) { chat.history.pop(); chat.tokenStats = previousStats; assistantMessage.content = `Ошибка: ${error.message}`; }
   finally {
     assistantMessage.pending = false; saveChats();
     if (isActive()) {
@@ -302,6 +335,7 @@ form.addEventListener('submit', async event => {
     }
     renderHistory();
     sendButton.disabled = false;
+    renderTokenStats();
   }
 });
 
@@ -327,7 +361,8 @@ async function initialize() {
     chats = data.chats.map(chat => ({
       id: chat.id, title: chat.messages.find(message => message.role === 'user')?.content.slice(0, 42) || 'Новый чат',
       messages: chat.messages, history: [...chat.messages],
-      model: chat.settings.model, provider: chat.settings.provider, lastTemperature: chat.settings.temperature
+      model: chat.settings.model, provider: chat.settings.provider, lastTemperature: chat.settings.temperature,
+      maxTokens: chat.settings.maxTokens ?? '', tokenStats: chat.tokenStats
     }));
     activeChatId = chats[0]?.id || createChat();
     saveChats(); renderChat(); renderHistory(); sendButton.disabled = false;

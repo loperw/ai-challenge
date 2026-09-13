@@ -14,8 +14,8 @@ class HistoryStore {
     fs.renameSync(temporary, this.file);
     this.chats = JSON.parse(JSON.stringify(chats));
   }
-  save(id, settings, messages) {
-    this.write({ ...this.chats, [id]: { id, settings, messages, updatedAt: Date.now() } });
+  save(id, settings, messages, tokenStats = null) {
+    this.write({ ...this.chats, [id]: { id, settings, messages, tokenStats, updatedAt: Date.now() } });
   }
   remove(id) { const next = { ...this.chats }; delete next[id]; this.write(next); }
   clear() { this.write({}); }

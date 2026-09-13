@@ -1,5 +1,6 @@
 const DEEPSEEK_MODELS = new Set(['deepseek-flash']);
 const GEMINI_MODELS = new Set(['gemini-3.5-flash-lite', 'gemini-3.5-flash']);
+const { estimateTokens, estimateHistory } = require('./public/token-counter');
 
 const JSON_SYSTEM_PROMPT = 'Формат ответа: строгий JSON. Верни строго один валидный JSON-объект без Markdown, пояснений или текста вне JSON.';
 
@@ -80,11 +81,12 @@ function validatedSettings(settings) {
 }
 
 class Agent {
-  constructor(settings, { fetchImpl = globalThis.fetch, messages = [], persist = () => {} } = {}) {
+  constructor(settings, { fetchImpl = globalThis.fetch, messages = [], tokenStats = null, persist = () => {} } = {}) {
     if (typeof fetchImpl !== 'function') throw new Error('Для агента необходим fetch.');
     this.fetch = fetchImpl;
     this.messages = messages.map(message => ({ ...message }));
     this.persist = persist;
+    this.tokenStats = tokenStats;
     this.busy = false;
     this.configure(settings);
   }
@@ -96,6 +98,7 @@ class Agent {
   reset() {
     if (this.busy) throw new AgentError('Дождитесь завершения ответа агента.', 409);
     this.messages = [];
+    this.tokenStats = null;
   }
 
   systemPrompt() {
@@ -112,6 +115,9 @@ class Agent {
     const historyLength = this.messages.length;
     this.messages.push({ role: 'user', content });
     let answer = '';
+    const previousStats = this.tokenStats;
+    this.completionUsage = {};
+    this.finishReason = null;
 
     try {
       const upstream = await this.createCompletion();
@@ -122,10 +128,21 @@ class Agent {
       }
       if (!answer) throw new AgentError('Сервис не вернул текст ответа.', 502);
       this.messages.push({ role: 'assistant', content: answer });
-      this.persist(this.settings, this.messages);
+      this.tokenStats = {
+        requestEstimate: estimateTokens(content),
+        historyEstimate: estimateHistory(this.messages),
+        inputEstimate: estimateHistory(this.messages.slice(0, -1)) + estimateTokens(this.systemPrompt()),
+        outputEstimate: estimateTokens(answer),
+        ...this.completionUsage,
+        maxTokens: this.settings.maxTokens ?? null,
+        finishReason: this.finishReason,
+        limited: ['length', 'MAX_TOKENS'].includes(this.finishReason)
+      };
+      this.persist(this.settings, this.messages, this.tokenStats);
       return answer;
     } catch (error) {
       this.messages.length = historyLength;
+      this.tokenStats = previousStats;
       throw error;
     } finally {
       this.busy = false;
@@ -204,10 +221,23 @@ class Agent {
       if (payload.error) throw new AgentError(payload.error.message || 'LLM вернула ошибку.', 502);
 
       if (upstream.provider === 'gemini') {
+        const usage = payload.usageMetadata;
+        if (usage) {
+          for (const [key, value] of Object.entries({ inputTokens: usage.promptTokenCount, outputTokens: usage.candidatesTokenCount, totalTokens: usage.totalTokenCount, reasoningTokens: usage.thoughtsTokenCount })) {
+            if (Number.isInteger(value) && value >= 0) this.completionUsage[key] = value;
+          }
+        }
+        this.finishReason = payload.candidates?.[0]?.finishReason || this.finishReason;
         for (const part of payload.candidates?.[0]?.content?.parts || []) {
-          if (part.text) yield part.text;
+          if (part.text && !part.thought) yield part.text;
         }
       } else {
+        if (payload.usage) {
+          for (const [key, value] of Object.entries({ inputTokens: payload.usage.prompt_tokens, outputTokens: payload.usage.completion_tokens, totalTokens: payload.usage.total_tokens, reasoningTokens: payload.usage.completion_tokens_details?.reasoning_tokens })) {
+            if (Number.isInteger(value) && value >= 0) this.completionUsage[key] = value;
+          }
+        }
+        this.finishReason = payload.choices?.[0]?.finish_reason || this.finishReason;
         const token = payload.choices?.[0]?.delta?.content;
         if (token) yield token;
       }
@@ -226,7 +256,8 @@ class AgentRegistry {
     if (!agent) {
       agent = new Agent(settings, { ...this.options,
         messages: this.options.store?.chats[conversationId]?.messages || [],
-        persist: (configuration, messages) => this.options.store?.save(conversationId, configuration, messages)
+        tokenStats: this.options.store?.chats[conversationId]?.tokenStats || null,
+        persist: (configuration, messages, tokenStats) => this.options.store?.save(conversationId, configuration, messages, tokenStats)
       });
       this.agents.set(conversationId, agent);
     } else {

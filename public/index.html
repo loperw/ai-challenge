@@ -49,6 +49,26 @@
         <div class="field-heading"><span>JSON-формат ответа</span><span class="format-control"><output id="jsonModeStatus">Выключен</output><span class="switch"><input id="jsonMode" type="checkbox" aria-label="Отвечать в JSON-формате" /><span class="switch-track" aria-hidden="true"></span></span></span></div>
         <small>JSON-формат: модель вернёт только корректный JSON без пояснений.</small>
       </label>
+      <label class="field" for="maxTokens"><span>Лимит токенов ответа</span>
+        <input id="maxTokens" type="number" min="1" max="384000" step="1" placeholder="По умолчанию модели" form="chatForm" />
+        <small>Меньше лимит — короче возможный ответ. При достижении лимита текст или JSON может оборваться. Допустимый максимум зависит от модели.</small>
+      </label>
+      <section class="token-panel" aria-label="Подсчёт токенов">
+        <h2>Токены</h2>
+        <table class="token-table">
+          <thead><tr><th scope="col">Что считаем</th><th scope="col">Токены</th></tr></thead>
+          <tbody>
+            <tr><th scope="row">Текущий запрос / черновик</th><td id="requestTokens">≈0</td></tr>
+            <tr><th scope="row">Вся история диалога</th><td id="historyTokens">≈0</td></tr>
+            <tr><th scope="row">Вход последнего вызова</th><td id="inputTokens">—</td></tr>
+            <tr><th scope="row">Ответ модели</th><td id="outputTokens">—</td></tr>
+            <tr><th scope="row">Всего за последний вызов</th><td id="totalTokens">—</td></tr>
+          </tbody>
+        </table>
+        <small>≈ — грубая оценка текста, без служебной разметки. Без ≈ — данные API. История включает запросы и ответы; вход API также включает системную инструкцию. Расход API может учитывать рассуждения модели.</small>
+        <p id="tokenBehavior" class="token-behavior" role="status"></p>
+        <small>История отправляется повторно с каждым запросом: длинный диалог увеличивает входной расход. Лимит ответа не сокращает историю.</small>
+      </section>
     </aside>
   </main>
   <div id="comparisonModal" class="modal" hidden role="dialog" aria-modal="true" aria-labelledby="comparisonTitle">
@@ -57,6 +77,7 @@
       <div id="comparisonResult" class="comparison-result" aria-live="polite"></div>
     </div>
   </div>
+  <script src="token-counter.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

@@ -69,6 +69,7 @@ async function handleChat(request, response) {
       onStart: () => startStream(response),
       onToken: token => writeToken(response, token)
     });
+    response.write(`data: ${JSON.stringify({ tokenStats: agent.tokenStats })}\n\n`);
     response.end('data: [DONE]\n\n');
   } catch (error) {
     const message = error.message || 'Не удалось выполнить запрос.';
