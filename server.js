@@ -60,6 +60,8 @@ async function handleChat(request, response) {
       jsonMode: body.jsonMode,
       temperature: body.temperature,
       maxTokens: body.maxTokens,
+      keepMessages: body.keepMessages,
+      summarizeEvery: body.summarizeEvery,
       stopSequence: body.stopSequence,
       systemPrompt: process.env.AGENT_SYSTEM_PROMPT || ''
     };
@@ -69,7 +71,7 @@ async function handleChat(request, response) {
       onStart: () => startStream(response),
       onToken: token => writeToken(response, token)
     });
-    response.write(`data: ${JSON.stringify({ tokenStats: agent.tokenStats })}\n\n`);
+    response.write(`data: ${JSON.stringify({ tokenStats: agent.tokenStats, context: agent.context })}\n\n`);
     response.end('data: [DONE]\n\n');
   } catch (error) {
     const message = error.message || 'Не удалось выполнить запрос.';

@@ -16,6 +16,14 @@ const welcomeMessage = 'Здравствуйте! Я готов помочь. В
 const storageKey = 'deepseek-chat-conversations';
 const defaultTemperature = 1;
 const maxTokensEl = document.querySelector('#maxTokens');
+const keepMessagesEl = document.querySelector('#keepMessages');
+const summarizeEveryEl = document.querySelector('#summarizeEvery');
+for (const [element, key] of [[keepMessagesEl, 'keepMessages'], [summarizeEveryEl, 'summarizeEvery']]) {
+  element.addEventListener('input', () => {
+    const chat = currentChat();
+    if (chat) { chat[key] = element.value; saveChats(); }
+  });
+}
 const { estimateTokens, estimateHistory } = TokenCounter;
 
 function renderTokenStats() {
@@ -31,10 +39,42 @@ function renderTokenStats() {
   display('#inputTokens', pending ? '…' : count(stats?.inputTokens, stats?.inputEstimate));
   display('#outputTokens', pending ? count(null, estimateTokens(pending.content)) : count(stats?.outputTokens, stats?.outputEstimate));
   display('#totalTokens', pending ? '…' : count(stats?.totalTokens, stats ? (stats.inputTokens ?? stats.inputEstimate) + (stats.outputTokens ?? stats.outputEstimate) : null));
+  const turns = chat.context?.turns || [];
+  const lastTurn = turns.at(-1);
+  const afterSummary = turns.findLast(turn => turn.summarized);
+  display('#contextTokens', count(null, stats?.contextEstimate));
+  display('#afterSummaryTokens', afterSummary ? count(afterSummary.estimated ? null : afterSummary.requestTokens, afterSummary.requestTokens) : '—');
+  display('#summaryTokens', lastTurn ? count(lastTurn.estimated ? null : lastTurn.summaryTokens, lastTurn.summaryTokens) : '—');
+  display('#summarizedCount', chat.context?.summarizedCount || 0);
+  display('#summaryText', chat.context?.summary || 'Суммаризации ещё не было.');
+  renderTokenChart(turns);
   display('#tokenBehavior', pending ? 'Модель отвечает… Оценка обновляется по мере генерации.'
     : stats?.limited ? `Последний ответ остановлен по лимиту токенов${stats.maxTokens ? ` (бюджет диалога ${stats.maxTokens}, на ответ ${stats.responseLimit ?? "—"})` : ''}. Он может быть неполным; увеличьте лимит и повторите запрос.`
     : stats ? `Причина завершения: ${stats.finishReason || 'API не сообщил'}. Бюджет диалога: ${stats.maxTokens ?? 'без общего лимита'}. На последний ответ: ${stats.responseLimit ?? 'по умолчанию модели'}.`
     : 'Отправьте запрос, чтобы увидеть фактический расход API.');
+}
+function renderTokenChart(turns) {
+  const chart = document.querySelector('#tokenChart');
+  const tooltip = document.querySelector('#chartTooltip');
+  const maximum = Math.max(1, ...turns.map(turn => turn.requestTokens + turn.summaryTokens));
+  document.querySelector('#chartScale').textContent = turns.length ? `Шкала: 0 — ${maximum.toLocaleString('ru-RU')} токенов` : '';
+  chart.replaceChildren();
+  tooltip.textContent = turns.length ? 'Наведите курсор на столбец для подробностей.' : 'Здесь появится первый ход.';
+  turns.forEach((turn, index) => {
+    const column = document.createElement('button');
+    column.type = 'button'; column.className = 'token-column';
+    const description = `Ход ${index + 1}: ${turn.estimated ? '≈' : ''}${(turn.requestTokens + turn.summaryTokens).toLocaleString('ru-RU')} токенов. Запрос и ответ: ${turn.requestTokens}. Суммаризация: ${turn.summaryTokens}.`;
+    column.title = description; column.setAttribute('aria-label', description);
+    const track = document.createElement('span'); track.className = 'token-track';
+    for (const [kind, value] of [['request', turn.requestTokens], ['summary', turn.summaryTokens]]) {
+      const fill = document.createElement('span'); fill.className = `token-fill ${kind}`;
+      fill.style.height = `${100 * value / maximum}%`; track.append(fill);
+    }
+    const label = document.createElement('span'); label.textContent = index + 1;
+    column.append(track, label);
+    for (const event of ['mouseenter', 'focus', 'click']) column.addEventListener(event, () => { tooltip.textContent = description; });
+    chart.append(column);
+  });
 }
 maxTokensEl.addEventListener('input', () => {
   const chat = currentChat();
@@ -139,6 +179,8 @@ function renderChat() {
   if (!chat) return;
   restoreChatModel(chat);
   maxTokensEl.value = chat.maxTokens ?? '';
+  keepMessagesEl.value = chat.keepMessages ?? 4;
+  summarizeEveryEl.value = chat.summarizeEvery ?? 4;
   renderTokenStats();
   renderChatTitle(chat);
   messagesEl.innerHTML = '';
@@ -223,7 +265,7 @@ async function readStream(response, onToken, onStats = () => {}) {
       if (data === '[DONE]') return;
       const chunk = JSON.parse(data);
       if (chunk.error) throw new Error(chunk.error);
-      if (chunk.tokenStats) onStats(chunk.tokenStats);
+      if (chunk.tokenStats) onStats(chunk.tokenStats, chunk.context);
       const token = chunk.choices?.[0]?.delta?.content;
       if (token) onToken(token);
     }
@@ -270,6 +312,7 @@ document.querySelector('#clearChat').addEventListener('click', async event => {
     chat.model = modelEl.value; chat.provider = selectedProvider();
     chat.title = 'Новый чат'; chat.history = []; chat.messages = [{ role: 'assistant', content: 'Диалог очищен. Чем могу помочь?' }];
     chat.tokenStats = null;
+    chat.context = null;
     saveChats(); renderChat(); renderHistory();
   } catch (error) {
     window.alert(`Не удалось очистить диалог: ${error.message}`);
@@ -285,12 +328,15 @@ form.addEventListener('submit', async event => {
     jsonMode: jsonModeEl.checked,
     temperature: defaultTemperature,
     maxTokens: maxTokensEl.value,
+    keepMessages: keepMessagesEl.value,
+    summarizeEvery: summarizeEveryEl.value,
   };
   const chat = currentChat(); if (!chat) return;
   chat.model = modelEl.value;
   chat.provider = selectedProvider();
   chat.lastTemperature = settings.temperature;
   const previousStats = chat.tokenStats;
+  const previousContext = chat.context;
   const userMessage = { role: 'user', content: text };
   chat.messages.push(userMessage); chat.history.push(userMessage);
   if (chat.title === 'Новый чат') chat.title = text.replace(/\s+/g, ' ').slice(0, 42);
@@ -318,10 +364,10 @@ form.addEventListener('submit', async event => {
         messagesEl.lastElementChild.querySelector('.bubble').textContent = answer;
         if (follow) messagesEl.scrollTop = messagesEl.scrollHeight;
       }
-    }, stats => { chat.tokenStats = stats; });
+    }, (stats, context) => { chat.tokenStats = stats; chat.context = context; });
     if (!answer) throw new Error('Сервис не вернул текст ответа.');
     chat.history.push({ role: 'assistant', content: answer });
-  } catch (error) { chat.history.pop(); chat.tokenStats = previousStats; assistantMessage.content = `Ошибка: ${error.message}`; }
+  } catch (error) { chat.history.pop(); chat.tokenStats = previousStats; chat.context = previousContext; assistantMessage.content = `Ошибка: ${error.message}`; }
   finally {
     assistantMessage.pending = false; saveChats();
     if (isActive()) {
@@ -362,7 +408,8 @@ async function initialize() {
       id: chat.id, title: chat.messages.find(message => message.role === 'user')?.content.slice(0, 42) || 'Новый чат',
       messages: chat.messages, history: [...chat.messages],
       model: chat.settings.model, provider: chat.settings.provider, lastTemperature: chat.settings.temperature,
-      maxTokens: chat.settings.maxTokens ?? '', tokenStats: chat.tokenStats
+      maxTokens: chat.settings.maxTokens ?? '', tokenStats: chat.tokenStats, context: chat.context,
+      keepMessages: chat.settings.keepMessages ?? 4, summarizeEvery: chat.settings.summarizeEvery ?? 4
     }));
     activeChatId = chats[0]?.id || createChat();
     saveChats(); renderChat(); renderHistory(); sendButton.disabled = false;

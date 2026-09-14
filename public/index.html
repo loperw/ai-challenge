@@ -51,7 +51,15 @@
       </label>
       <label class="field" for="maxTokens"><span>Лимит токенов диалога</span>
         <input id="maxTokens" type="number" min="1" max="384000" step="1" placeholder="Без общего лимита" form="chatForm" />
-        <small>Общий бюджет истории запросов и ответов, включая системную инструкцию. Модели доступен только остаток после истории и нового запроса.</small>
+        <small>Бюджет активного контекста и ответа, включая системную инструкцию. После суммаризации вместо старых сообщений учитывается summary.</small>
+      </label>
+      <label class="field"><span>Последних сообщений без изменений (N)</span>
+        <input id="keepMessages" type="number" min="1" max="1000" step="1" value="4" form="chatForm" />
+        <small>Сколько свежих сообщений всегда передавать модели дословно. Более старые сообщения можно сжимать.</small>
+      </label>
+      <label class="field"><span>Суммаризировать каждые … сообщений</span>
+        <input id="summarizeEvery" type="number" min="1" max="1000" step="1" value="4" form="chatForm" />
+        <small>Сколько старых сообщений сверх N накопить перед сжатием. Например: N = 4, порог = 4 — сохраняем последние 4, а старые сжимаем, когда их станет хотя бы 4. Проверка выполняется при отправке запроса; сообщение пользователя и ответ считаются отдельно.</small>
       </label>
       <section class="token-panel" aria-label="Подсчёт токенов">
         <h2>Токены</h2>
@@ -63,11 +71,20 @@
             <tr><th scope="row">Вход последнего вызова</th><td id="inputTokens">—</td></tr>
             <tr><th scope="row">Ответ модели</th><td id="outputTokens">—</td></tr>
             <tr><th scope="row">Всего за последний вызов</th><td id="totalTokens">—</td></tr>
+            <tr><th scope="row">Контекст после сжатия</th><td id="contextTokens">—</td></tr>
+            <tr><th scope="row">Запрос после суммаризации</th><td id="afterSummaryTokens">—</td></tr>
+            <tr><th scope="row">Создание summary за ход</th><td id="summaryTokens">—</td></tr>
           </tbody>
         </table>
         <small>≈ — грубая оценка текста, без служебной разметки. Без ≈ — данные API. История включает запросы и ответы; вход API также включает системную инструкцию. Расход API может учитывать рассуждения модели.</small>
         <p id="tokenBehavior" class="token-behavior" role="status"></p>
-        <small>История отправляется повторно с каждым запросом: длинный диалог увеличивает входной расход. При исчерпании бюджета увеличьте лимит или очистите диалог. Бюджет рассчитывается приблизительно (≈), поэтому точный предел токенизатора модели может отличаться.</small>
+        <small>В запрос отправляются summary и несжатые сообщения. Полный текст остаётся в чате для просмотра. Контекст после сжатия включает последний ответ и системную инструкцию. Лимит применяется к основному запросу; создание summary — отдельный вызов API.</small>
+        <details class="summary-details"><summary>Память диалога · <span id="summarizedCount">0</span> сообщений</summary><p id="summaryText">Суммаризации ещё не было.</p></details>
+        <h2 class="chart-heading">Токены по ходам</h2>
+        <small>Фиолетовый — запрос и ответ, бирюзовый — создание summary. Наведите курсор или выберите столбец клавишей Tab.</small>
+        <p id="chartScale" class="chart-scale"></p>
+        <div id="tokenChart" class="token-chart" aria-label="Расход токенов по ходам"></div>
+        <p id="chartTooltip" class="chart-tooltip" role="status">Здесь появится первый ход.</p>
       </section>
     </aside>
   </main>
