@@ -49,6 +49,8 @@ button,input,textarea,select { font:inherit; } .app-shell { display:grid; grid-t
 .delete-chat { flex:none; width:26px; height:28px; padding:0; border:0; border-radius:6px; background:transparent; color:#9298a4; font-size:19px; cursor:pointer; }
 .delete-chat:hover { background:#fbe9e9; color:#bd5050; }
 .delete-chat:disabled { opacity:.35; cursor:wait; }
+#optionBranches:disabled { cursor:not-allowed; }
+#optionBranches[aria-busy="true"] { cursor:wait; }
 @media (max-width:760px) { .history-chat-row { flex:0 0 175px; } }
 
 /* Each panel scrolls inside the viewport instead of extending the page. */

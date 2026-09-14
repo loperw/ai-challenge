@@ -61,7 +61,7 @@ async function handleChat(request, response) {
       temperature: body.temperature,
       maxTokens: body.maxTokens,
       keepMessages: body.keepMessages,
-      summarizeEvery: body.summarizeEvery,
+      contextStrategy: body.contextStrategy,
       stopSequence: body.stopSequence,
       systemPrompt: process.env.AGENT_SYSTEM_PROMPT || ''
     };
@@ -71,7 +71,7 @@ async function handleChat(request, response) {
       onStart: () => startStream(response),
       onToken: token => writeToken(response, token)
     });
-    response.write(`data: ${JSON.stringify({ tokenStats: agent.tokenStats, context: agent.context })}\n\n`);
+    response.write(`data: ${JSON.stringify({ tokenStats: agent.tokenStats, context: agent.context, messages: agent.messages })}\n\n`);
     response.end('data: [DONE]\n\n');
   } catch (error) {
     const message = error.message || 'Не удалось выполнить запрос.';
@@ -94,6 +94,17 @@ async function handleReset(request, response) {
 }
 
 const server = http.createServer(async (request, response) => {
+  if (request.method === 'POST' && request.url === '/api/chat/branch') {
+    try {
+      const body = await readBody(request);
+      if (!validConversationId(body.conversationId)) throw new AgentError('Некорректный диалог.', 400);
+      const saved = store.chats[body.conversationId];
+      if (!saved) throw new AgentError('Сначала отправьте сообщение.', 400);
+      const agent = agents.get(body.conversationId, { ...saved.settings, contextStrategy: 'branching' });
+      agent.branchAction(body.action, body.id);
+      return sendJson(response, 200, { messages: agent.messages, context: agent.context, tokenStats: agent.tokenStats });
+    } catch (error) { return sendJson(response, error.status || 500, { error: error.message }); }
+  }
   if (request.method === 'GET' && request.url === '/api/chats') return sendJson(response, 200, { chats: store.list() });
   if (request.method === 'POST' && request.url === '/api/chats/clear') {
     try { agents.clear(); return sendJson(response, 200, { ok: true }); }

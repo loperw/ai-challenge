@@ -51,16 +51,20 @@
       </label>
       <label class="field" for="maxTokens"><span>Лимит токенов диалога</span>
         <input id="maxTokens" type="number" min="1" max="384000" step="1" placeholder="Без общего лимита" form="chatForm" />
-        <small>Бюджет активного контекста и ответа, включая системную инструкцию. После суммаризации вместо старых сообщений учитывается summary.</small>
+        <small>Бюджет активного контекста и ответа, включая системную инструкцию. В Sticky Facts учитывается также блок facts.</small>
       </label>
       <label class="field"><span>Последних сообщений без изменений (N)</span>
         <input id="keepMessages" type="number" min="1" max="1000" step="1" value="4" form="chatForm" />
-        <small>Сколько свежих сообщений всегда передавать модели дословно. Более старые сообщения можно сжимать.</small>
+        <small>Сколько свежих сообщений всегда передавать модели дословно. В Sliding Window и Sticky Facts старые сообщения отбрасываются. В Branching отправляется вся активная ветка.</small>
       </label>
-      <label class="field"><span>Суммаризировать каждые … сообщений</span>
-        <input id="summarizeEvery" type="number" min="1" max="1000" step="1" value="4" form="chatForm" />
-        <small>Сколько старых сообщений сверх N накопить перед сжатием. Например: N = 4, порог = 4 — сохраняем последние 4, а старые сжимаем, когда их станет хотя бы 4. Проверка выполняется при отправке запроса; сообщение пользователя и ответ считаются отдельно.</small>
-      </label>
+      <label class="field"><span>Стратегия контекста</span><select id="contextStrategy">
+        <option value="sliding">Sliding Window</option><option value="facts">Sticky Facts</option><option value="branching">Branching</option>
+      </select><small id="strategyHelp"></small></label>
+      <section id="branchControls" hidden>
+        <button id="optionBranches" type="button" class="compare-button">Создать ветки из вариантов ответа</button>
+        <label class="field"><span>Вариант / ветка диалога</span><select id="branches"></select></label>
+        <small>Каждый пункт последнего списка станет отдельной веткой с общей историей до этого ответа. Выберите вариант и продолжайте разговор. Переключение сохраняет переписку каждой ветки.</small>
+      </section>
       <section class="token-panel" aria-label="Подсчёт токенов">
         <h2>Токены</h2>
         <table class="token-table">
@@ -71,15 +75,15 @@
             <tr><th scope="row">Вход последнего вызова</th><td id="inputTokens">—</td></tr>
             <tr><th scope="row">Ответ модели</th><td id="outputTokens">—</td></tr>
             <tr><th scope="row">Всего за последний вызов</th><td id="totalTokens">—</td></tr>
-            <tr><th scope="row">Контекст после сжатия</th><td id="contextTokens">—</td></tr>
-            <tr><th scope="row">Запрос после суммаризации</th><td id="afterSummaryTokens">—</td></tr>
-            <tr><th scope="row">Создание summary за ход</th><td id="summaryTokens">—</td></tr>
+            <tr><th scope="row">Активный контекст</th><td id="contextTokens">—</td></tr>
+            <tr><th scope="row">Последний запрос с памятью</th><td id="afterSummaryTokens">—</td></tr>
+            <tr><th scope="row">Обновление facts за ход</th><td id="summaryTokens">—</td></tr>
           </tbody>
         </table>
         <small>≈ — грубая оценка текста, без служебной разметки. Без ≈ — данные API. История включает запросы и ответы; вход API также включает системную инструкцию. Расход API может учитывать рассуждения модели.</small>
         <p id="tokenBehavior" class="token-behavior" role="status"></p>
-        <small>В запрос отправляются summary и несжатые сообщения. Полный текст остаётся в чате для просмотра. Контекст после сжатия включает последний ответ и системную инструкцию. Лимит применяется к основному запросу; создание summary — отдельный вызов API.</small>
-        <details class="summary-details"><summary>Память диалога · <span id="summarizedCount">0</span> сообщений</summary><p id="summaryText">Суммаризации ещё не было.</p></details>
+        <small>Контекст определяется выбранной стратегией. Обновление facts — отдельный вызов API вне бюджета основного ответа. Summary не используется.</small>
+        <details class="summary-details"><summary>Facts · <span id="summarizedCount">0</span> ключей</summary><p id="summaryText">Facts пока нет.</p></details>
         <h2 class="chart-heading">Токены по ходам</h2>
         <small>Фиолетовый — запрос и ответ, бирюзовый — создание summary. Наведите курсор или выберите столбец клавишей Tab.</small>
         <p id="chartScale" class="chart-scale"></p>

@@ -17,11 +17,11 @@ const storageKey = 'deepseek-chat-conversations';
 const defaultTemperature = 1;
 const maxTokensEl = document.querySelector('#maxTokens');
 const keepMessagesEl = document.querySelector('#keepMessages');
-const summarizeEveryEl = document.querySelector('#summarizeEvery');
-for (const [element, key] of [[keepMessagesEl, 'keepMessages'], [summarizeEveryEl, 'summarizeEvery']]) {
+const strategyEl = document.querySelector('#contextStrategy');
+for (const [element, key] of [[keepMessagesEl, 'keepMessages'], [strategyEl, 'contextStrategy']]) {
   element.addEventListener('input', () => {
     const chat = currentChat();
-    if (chat) { chat[key] = element.value; saveChats(); }
+    if (chat) { chat[key] = element.value; saveChats(); renderContextControls(); }
   });
 }
 const { estimateTokens, estimateHistory } = TokenCounter;
@@ -41,12 +41,12 @@ function renderTokenStats() {
   display('#totalTokens', pending ? '…' : count(stats?.totalTokens, stats ? (stats.inputTokens ?? stats.inputEstimate) + (stats.outputTokens ?? stats.outputEstimate) : null));
   const turns = chat.context?.turns || [];
   const lastTurn = turns.at(-1);
-  const afterSummary = turns.findLast(turn => turn.summarized);
+  const afterSummary = turns.findLast(turn => turn.summaryTokens > 0);
   display('#contextTokens', count(null, stats?.contextEstimate));
   display('#afterSummaryTokens', afterSummary ? count(afterSummary.estimated ? null : afterSummary.requestTokens, afterSummary.requestTokens) : '—');
   display('#summaryTokens', lastTurn ? count(lastTurn.estimated ? null : lastTurn.summaryTokens, lastTurn.summaryTokens) : '—');
-  display('#summarizedCount', chat.context?.summarizedCount || 0);
-  display('#summaryText', chat.context?.summary || 'Суммаризации ещё не было.');
+  display('#summarizedCount', Object.keys(chat.context?.facts || {}).length);
+  display('#summaryText', JSON.stringify(chat.context?.facts || {}, null, 2));
   renderTokenChart(turns);
   display('#tokenBehavior', pending ? 'Модель отвечает… Оценка обновляется по мере генерации.'
     : stats?.limited ? `Последний ответ остановлен по лимиту токенов${stats.maxTokens ? ` (бюджет диалога ${stats.maxTokens}, на ответ ${stats.responseLimit ?? "—"})` : ''}. Он может быть неполным; увеличьте лимит и повторите запрос.`
@@ -63,7 +63,7 @@ function renderTokenChart(turns) {
   turns.forEach((turn, index) => {
     const column = document.createElement('button');
     column.type = 'button'; column.className = 'token-column';
-    const description = `Ход ${index + 1}: ${turn.estimated ? '≈' : ''}${(turn.requestTokens + turn.summaryTokens).toLocaleString('ru-RU')} токенов. Запрос и ответ: ${turn.requestTokens}. Суммаризация: ${turn.summaryTokens}.`;
+    const description = `Ход ${index + 1}: ${turn.estimated ? '≈' : ''}${(turn.requestTokens + turn.summaryTokens).toLocaleString('ru-RU')} токенов. Запрос и ответ: ${turn.requestTokens}. Обновление facts: ${turn.summaryTokens}.`;
     column.title = description; column.setAttribute('aria-label', description);
     const track = document.createElement('span'); track.className = 'token-track';
     for (const [kind, value] of [['request', turn.requestTokens], ['summary', turn.summaryTokens]]) {
@@ -133,6 +133,8 @@ function renderChatTitle(chat) {
   const count = document.createElement('span');
   count.className = 'chat-memory-count';
   count.textContent = ' · ' + (chat.history?.length || 0) + ' сообщений';
+  const branchName = chat.contextStrategy === 'branching' && chat.context?.branches?.[chat.context.activeBranch]?.name;
+  if (branchName) title.textContent += ' · ' + branchName;
   chatTitleEl.replaceChildren(title, count);
 }
 function renderHistory() {
@@ -180,7 +182,8 @@ function renderChat() {
   restoreChatModel(chat);
   maxTokensEl.value = chat.maxTokens ?? '';
   keepMessagesEl.value = chat.keepMessages ?? 4;
-  summarizeEveryEl.value = chat.summarizeEvery ?? 4;
+  strategyEl.value = chat.contextStrategy ?? 'sliding';
+  renderContextControls();
   renderTokenStats();
   renderChatTitle(chat);
   messagesEl.innerHTML = '';
@@ -329,7 +332,7 @@ form.addEventListener('submit', async event => {
     temperature: defaultTemperature,
     maxTokens: maxTokensEl.value,
     keepMessages: keepMessagesEl.value,
-    summarizeEvery: summarizeEveryEl.value,
+    contextStrategy: strategyEl.value,
   };
   const chat = currentChat(); if (!chat) return;
   chat.model = modelEl.value;
@@ -345,6 +348,7 @@ form.addEventListener('submit', async event => {
   const isActive = () => activeChatId === chat.id;
   if (isActive()) { addMessage('user', text); addMessage('assistant', '', true); messagesEl.scrollTop = messagesEl.scrollHeight; }
   promptEl.value = ''; promptEl.style.height = 'auto'; sendButton.disabled = true; renderHistory(); renderChatTitle(chat);
+  renderContextControls();
   renderTokenStats();
   let answer = '';
   try {
@@ -367,6 +371,10 @@ form.addEventListener('submit', async event => {
     }, (stats, context) => { chat.tokenStats = stats; chat.context = context; });
     if (!answer) throw new Error('Сервис не вернул текст ответа.');
     chat.history.push({ role: 'assistant', content: answer });
+    if (settings.contextStrategy !== 'branching') {
+      chat.history = chat.history.slice(-Number(settings.keepMessages));
+      chat.messages = [...chat.history];
+    }
   } catch (error) { chat.history.pop(); chat.tokenStats = previousStats; chat.context = previousContext; assistantMessage.content = `Ошибка: ${error.message}`; }
   finally {
     assistantMessage.pending = false; saveChats();
@@ -381,6 +389,7 @@ form.addEventListener('submit', async event => {
     }
     renderHistory();
     sendButton.disabled = false;
+    renderContextControls();
     renderTokenStats();
   }
 });
@@ -409,10 +418,49 @@ async function initialize() {
       messages: chat.messages, history: [...chat.messages],
       model: chat.settings.model, provider: chat.settings.provider, lastTemperature: chat.settings.temperature,
       maxTokens: chat.settings.maxTokens ?? '', tokenStats: chat.tokenStats, context: chat.context,
-      keepMessages: chat.settings.keepMessages ?? 4, summarizeEvery: chat.settings.summarizeEvery ?? 4
+      keepMessages: chat.settings.keepMessages ?? 4, contextStrategy: chat.settings.contextStrategy ?? 'sliding'
     }));
     activeChatId = chats[0]?.id || createChat();
     saveChats(); renderChat(); renderHistory(); sendButton.disabled = false;
   } catch (error) { addMessage('assistant', error.message + ' Перезагрузите страницу для повторной попытки.'); }
 }
 initialize();
+
+function renderContextControls() {
+  const chat = currentChat();
+  const branching = strategyEl.value === 'branching';
+  document.querySelector('#branchControls').hidden = !branching;
+  keepMessagesEl.disabled = branching;
+  document.querySelector('#strategyHelp').textContent = {
+    sliding: 'Только последние N сообщений, включая новый запрос. Старые сообщения удаляются. Summary выключен.',
+    facts: 'После каждого сообщения пользователя обновляются facts. В запрос идут facts и последние N сообщений.',
+    branching: 'Получите список вариантов и нажмите «Создать ветки из вариантов ответа». Выберите тему в селекторе: у каждой ветки своя переписка.'
+  }[strategyEl.value];
+  for (const [selector, items, active] of [
+    ['#branches', chat?.context?.branches || {}, chat?.context?.activeBranch]
+  ]) {
+    const select = document.querySelector(selector); select.replaceChildren();
+    for (const [id, value] of Object.entries(items)) { const option = document.createElement('option'); option.value = id; option.textContent = value.name; select.append(option); }
+    if (active && Object.hasOwn(items, active)) select.value = active;
+  }
+  const busy = Boolean(chat?.messages.some(message => message.pending));
+  const hasAnswer = chat?.history?.at(-1)?.role === 'assistant';
+  const button = document.querySelector('#optionBranches');
+  button.disabled = !hasAnswer || busy;
+  button.setAttribute('aria-busy', String(busy));
+  button.title = busy ? 'Дождитесь завершения ответа.' : !hasAnswer ? 'Сначала получите ответ со списком вариантов.' : 'Создать отдельную ветку для каждого варианта из последнего ответа.';
+  document.querySelector('#branches').disabled = busy;
+}
+async function branchAction(action, id) {
+  if (sendButton.disabled) return;
+  const chat = currentChat(); sendButton.disabled = true;
+  try {
+    const response = await apiFetch('/api/chat/branch', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ conversationId: chat.id, action, id }) });
+    const data = await response.json(); if (!response.ok) throw new Error(data.error);
+    Object.assign(chat, data, { history: [...data.messages], contextStrategy: 'branching' });
+    saveChats(); renderChat(); renderHistory();
+  } catch (error) { window.alert(error.message); }
+  finally { sendButton.disabled = false; }
+}
+document.querySelector('#optionBranches').addEventListener('click', () => branchAction('options'));
+document.querySelector('#branches').addEventListener('change', event => branchAction('switch', event.target.value));
