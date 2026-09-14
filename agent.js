@@ -106,6 +106,15 @@ class Agent {
       .filter(Boolean).join('\n\n');
   }
 
+  responseTokenLimit() {
+    if (this.settings.maxTokens === undefined) return undefined;
+    const remaining = this.settings.maxTokens - estimateHistory(this.messages) - estimateTokens(this.systemPrompt());
+    if (remaining < 1) {
+      throw new AgentError('Лимит токенов диалога исчерпан историей и текущим запросом. Увеличьте лимит или очистите диалог.', 400);
+    }
+    return remaining;
+  }
+
   async respond(userRequest, { onStart = () => {}, onToken = () => {} } = {}) {
     const content = typeof userRequest === 'string' ? userRequest.trim() : '';
     if (!content) throw new AgentError('Добавьте сообщение.', 400);
@@ -120,6 +129,7 @@ class Agent {
     this.finishReason = null;
 
     try {
+      const responseLimit = this.responseTokenLimit();
       const upstream = await this.createCompletion();
       onStart();
       for await (const token of this.readCompletion(upstream)) {
@@ -135,6 +145,7 @@ class Agent {
         outputEstimate: estimateTokens(answer),
         ...this.completionUsage,
         maxTokens: this.settings.maxTokens ?? null,
+        responseLimit: responseLimit ?? null,
         finishReason: this.finishReason,
         limited: ['length', 'MAX_TOKENS'].includes(this.finishReason)
       };
@@ -164,7 +175,7 @@ class Agent {
       temperature: this.settings.temperature,
       stream: true,
       ...(isDeepSeek && { thinking: { type: 'disabled' } }),
-      ...(this.settings.maxTokens !== undefined && { max_tokens: this.settings.maxTokens }),
+      ...(this.settings.maxTokens !== undefined && { max_tokens: this.responseTokenLimit() }),
       ...(this.settings.stopSequence && { stop: [this.settings.stopSequence] }),
       ...(this.settings.jsonMode && { response_format: { type: 'json_object' } })
     };
@@ -195,7 +206,7 @@ class Agent {
       ...(systemPrompt && { systemInstruction: { parts: [{ text: systemPrompt }] } }),
       generationConfig: {
         temperature: this.settings.temperature,
-        ...(this.settings.maxTokens !== undefined && { maxOutputTokens: this.settings.maxTokens }),
+        ...(this.settings.maxTokens !== undefined && { maxOutputTokens: this.responseTokenLimit() }),
         ...(this.settings.stopSequence && { stopSequences: [this.settings.stopSequence] }),
         ...(this.settings.jsonMode && { responseMimeType: 'application/json' })
       }

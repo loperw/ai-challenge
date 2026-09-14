@@ -32,8 +32,8 @@ function renderTokenStats() {
   display('#outputTokens', pending ? count(null, estimateTokens(pending.content)) : count(stats?.outputTokens, stats?.outputEstimate));
   display('#totalTokens', pending ? '…' : count(stats?.totalTokens, stats ? (stats.inputTokens ?? stats.inputEstimate) + (stats.outputTokens ?? stats.outputEstimate) : null));
   display('#tokenBehavior', pending ? 'Модель отвечает… Оценка обновляется по мере генерации.'
-    : stats?.limited ? `Последний ответ остановлен по лимиту токенов${stats.maxTokens ? ` (задано ${stats.maxTokens})` : ''}. Он может быть неполным; увеличьте лимит и повторите запрос.`
-    : stats ? `Причина завершения: ${stats.finishReason || 'API не сообщил'}. Лимит последнего ответа: ${stats.maxTokens ?? 'по умолчанию модели'}.`
+    : stats?.limited ? `Последний ответ остановлен по лимиту токенов${stats.maxTokens ? ` (бюджет диалога ${stats.maxTokens}, на ответ ${stats.responseLimit ?? "—"})` : ''}. Он может быть неполным; увеличьте лимит и повторите запрос.`
+    : stats ? `Причина завершения: ${stats.finishReason || 'API не сообщил'}. Бюджет диалога: ${stats.maxTokens ?? 'без общего лимита'}. На последний ответ: ${stats.responseLimit ?? 'по умолчанию модели'}.`
     : 'Отправьте запрос, чтобы увидеть фактический расход API.');
 }
 maxTokensEl.addEventListener('input', () => {

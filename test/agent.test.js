@@ -51,7 +51,7 @@ test('Agent owns the message stack and applies generation settings', async () =>
 
   assert.equal(requests[0].url, 'https://api.deepseek.com/chat/completions');
   assert.equal(requests[0].body.temperature, 0.4);
-  assert.equal(requests[0].body.max_tokens, 500);
+  assert.equal(requests[0].body.max_tokens, 500 - require('../public/token-counter').estimateTokens('Первый вопрос') - require('../public/token-counter').estimateTokens('Отвечай кратко.'));
   assert.deepEqual(requests[0].body.stop, ['###']);
   assert.equal(requests[0].body.messages[0].role, 'system');
   assert.equal(requests[0].body.messages[0].content, 'Отвечай кратко.');
@@ -116,6 +116,8 @@ test('saved conversations survive restart and continue with previous messages', 
   const restarted = new AgentRegistry({ store: new HistoryStore(file) });
   const restored = restarted.get('chat-1', deepSeekSettings());
   assert.deepEqual(restored.messages, agent.messages);
+  assert.deepEqual(restored.tokenStats, agent.tokenStats);
+  assert.equal(restored.settings.maxTokens, 500);
   restored.createCompletion = async () => {
     assert.equal(restored.messages[0].content, 'Меня зовут Артем');
     assert.equal(restored.messages.length, 3);
