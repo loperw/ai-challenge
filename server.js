@@ -51,6 +51,19 @@ function validConversationId(value) {
   return typeof value === 'string' && /^[a-zA-Z0-9_-]{1,128}$/.test(value);
 }
 
+function profileFields(body) {
+  const read = (key, max) => typeof body?.[key] === 'string' ? body[key].trim().slice(0, max) : '';
+  const profile = {
+    name: read('name', 80),
+    occupation: read('occupation', 240),
+    language: read('language', 120),
+    responseFormat: read('responseFormat', 500),
+    constraints: read('constraints', 1000)
+  };
+  if (!profile.name) throw new AgentError('Укажите название профиля.', 400);
+  return profile;
+}
+
 async function handleChat(request, response) {
   try {
     const body = await readBody(request);
@@ -67,9 +80,15 @@ async function handleChat(request, response) {
       keepMessages: body.keepMessages,
       contextStrategy: body.contextStrategy,
       stopSequence: body.stopSequence,
+      profileId: body.profileId,
       systemPrompt: process.env.AGENT_SYSTEM_PROMPT || ''
     };
-    const agent = body.ephemeral ? new Agent(settings) : agents.get(body.conversationId, settings);
+    if (settings.profileId && !store.getProfile(settings.profileId)) {
+      return sendJson(response, 400, { error: 'Выбранный профиль не найден.' });
+    }
+    const agent = body.ephemeral
+      ? new Agent(settings, { getProfile: profileId => store.getProfile(profileId) })
+      : agents.get(body.conversationId, settings);
 
     await agent.respond(body.message, {
       onStart: () => startStream(response),
@@ -99,6 +118,27 @@ async function handleReset(request, response) {
 }
 
 const server = http.createServer(async (request, response) => {
+  if (request.method === 'GET' && request.url === '/api/profiles') {
+    return sendJson(response, 200, { profiles: store.listProfiles() });
+  }
+  if (request.method === 'POST' && request.url === '/api/profiles') {
+    try { return sendJson(response, 201, { profile: store.createProfile(profileFields(await readBody(request))) }); }
+    catch (error) { return sendJson(response, error.status || 500, { error: error.message || 'Не удалось создать профиль.' }); }
+  }
+  const profileRoute = request.url.match(/^\/api\/profiles\/([a-f0-9-]+)$/i);
+  if (request.method === 'PUT' && profileRoute) {
+    try {
+      const profile = store.updateProfile(profileRoute[1], profileFields(await readBody(request)));
+      return profile ? sendJson(response, 200, { profile }) : sendJson(response, 404, { error: 'Профиль не найден.' });
+    } catch (error) { return sendJson(response, error.status || 500, { error: error.message || 'Не удалось обновить профиль.' }); }
+  }
+  if (request.method === 'DELETE' && profileRoute) {
+    try {
+      return store.deleteProfile(profileRoute[1])
+        ? sendJson(response, 200, { ok: true })
+        : sendJson(response, 404, { error: 'Профиль не найден.' });
+    } catch (error) { return sendJson(response, error.status || 500, { error: error.message || 'Не удалось удалить профиль.' }); }
+  }
   if (request.method === 'POST' && request.url === '/api/memory') {
     try {
       const body = await readBody(request);

@@ -62,6 +62,16 @@ class SQLiteStore {
       );
       CREATE INDEX IF NOT EXISTS memories_scope_conversation
         ON memories(scope, conversation_id, created_at);
+      CREATE TABLE IF NOT EXISTS profiles (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        occupation TEXT NOT NULL DEFAULT '',
+        language TEXT NOT NULL DEFAULT '',
+        response_format TEXT NOT NULL DEFAULT '',
+        constraints_text TEXT NOT NULL DEFAULT '',
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
     `);
     this.migrateLegacy(legacyConversationsPath, legacyMemoryPath);
   }
@@ -127,6 +137,63 @@ class SQLiteStore {
   list() {
     return this.database.prepare('SELECT * FROM conversations ORDER BY updated_at DESC').all()
       .map(row => this.conversationFromRow(row));
+  }
+
+  profileFromRow(row) {
+    if (!row) return null;
+    return {
+      id: row.id,
+      name: row.name,
+      occupation: row.occupation,
+      language: row.language,
+      responseFormat: row.response_format,
+      constraints: row.constraints_text,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at
+    };
+  }
+
+  listProfiles() {
+    return this.database.prepare('SELECT * FROM profiles ORDER BY updated_at DESC, rowid DESC').all()
+      .map(row => this.profileFromRow(row));
+  }
+
+  getProfile(id) {
+    if (!id) return null;
+    return this.profileFromRow(this.database.prepare('SELECT * FROM profiles WHERE id = ?').get(id));
+  }
+
+  createProfile(profile) {
+    const now = Date.now();
+    const id = crypto.randomUUID();
+    this.database.prepare(`INSERT INTO profiles
+      (id, name, occupation, language, response_format, constraints_text, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
+      .run(id, profile.name, profile.occupation, profile.language, profile.responseFormat, profile.constraints, now, now);
+    return this.getProfile(id);
+  }
+
+  updateProfile(id, profile) {
+    const result = this.database.prepare(`UPDATE profiles SET
+      name = ?, occupation = ?, language = ?, response_format = ?, constraints_text = ?, updated_at = ?
+      WHERE id = ?`)
+      .run(profile.name, profile.occupation, profile.language, profile.responseFormat, profile.constraints, Date.now(), id);
+    return result.changes ? this.getProfile(id) : null;
+  }
+
+  deleteProfile(id) {
+    return this.transaction(() => {
+      const result = this.database.prepare('DELETE FROM profiles WHERE id = ?').run(id);
+      if (!result.changes) return false;
+      const conversations = this.database.prepare('SELECT id, settings_json FROM conversations').all();
+      const update = this.database.prepare('UPDATE conversations SET settings_json = ? WHERE id = ?');
+      for (const conversation of conversations) {
+        const settings = parseJson(conversation.settings_json, {});
+        if (settings.profileId !== id) continue;
+        update.run(JSON.stringify({ ...settings, profileId: '' }), conversation.id);
+      }
+      return true;
+    });
   }
 
   remove(id) {

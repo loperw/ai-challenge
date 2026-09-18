@@ -59,6 +59,33 @@ test('working and long-term memory are stored separately', t => {
   assert.equal(store.view('chat-b').longTerm.length, 1);
 });
 
+test('user profiles are separate persisted entities', t => {
+  const directory = mkdtempSync(join(tmpdir(), 'agent-profiles-'));
+  const file = join(directory, 'profiles.sqlite');
+  const stores = [];
+  t.after(() => { stores.forEach(item => item.close()); rmSync(directory, { recursive: true, force: true }); });
+  let store = new SQLiteStore(file);
+  stores.push(store);
+  const created = store.createProfile({
+    name: 'Рабочий', occupation: 'Дизайнер', language: 'Русский',
+    responseFormat: 'Краткие списки', constraints: 'Без эмодзи'
+  });
+  assert.equal(store.getProfile(created.id).occupation, 'Дизайнер');
+  store.updateProfile(created.id, { ...created, name: 'Основной', responseFormat: 'Сначала вывод' });
+
+  store = new SQLiteStore(file);
+  stores.push(store);
+  assert.deepEqual(store.listProfiles().map(profile => profile.name), ['Основной']);
+  assert.equal(store.getProfile(created.id).responseFormat, 'Сначала вывод');
+  store.clear();
+  assert.equal(store.listProfiles().length, 1);
+  store.save('profile-chat', { provider: 'deepseek', model: 'deepseek-flash', profileId: created.id }, []);
+  assert.equal(store.deleteProfile(created.id), true);
+  assert.equal(store.getProfile(created.id), null);
+  assert.equal(store.chats['profile-chat'].settings.profileId, '');
+  assert.equal(store.deleteProfile(created.id), false);
+});
+
 test('memory commands are displayed but excluded from LLM messages', async () => {
   const requests = [];
   const agent = new Agent({ provider: 'deepseek', model: 'deepseek-flash' }, {
@@ -82,4 +109,20 @@ test('memory commands are displayed but excluded from LLM messages', async () =>
   assert.ok(requests[0].prompt.indexOf('Долговременная память') < requests[0].prompt.indexOf('ОБЯЗАТЕЛЬНАЯ РАБОЧАЯ'));
   assert.match(requests[0].prompt, /безусловно заменяют конфликтующие сведения/);
   assert.match(requests[0].prompt, /Не считай рабочую запись ошибочной/);
+});
+
+test('selected profile is added to every agent system prompt', () => {
+  const profile = {
+    id: 'profile-1', name: 'Рабочий', occupation: 'Аналитик', language: 'Русский',
+    responseFormat: 'Сначала вывод, затем пункты', constraints: 'Без эмодзи'
+  };
+  const agent = new Agent({ provider: 'deepseek', model: 'deepseek-flash', profileId: profile.id }, {
+    getProfile: id => id === profile.id ? profile : null
+  });
+  const prompt = agent.systemPrompt();
+  assert.match(prompt, /ПРОФИЛЬ ПОЛЬЗОВАТЕЛЯ/);
+  assert.match(prompt, /Род деятельности: Аналитик/);
+  assert.match(prompt, /Язык диалога: Русский/);
+  assert.match(prompt, /Сначала вывод, затем пункты/);
+  assert.match(prompt, /Ограничения: Без эмодзи/);
 });

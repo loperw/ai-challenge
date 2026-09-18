@@ -86,17 +86,19 @@ function validatedSettings(settings) {
     maxTokens,
     jsonMode: Boolean(settings.jsonMode),
     stopSequence: typeof settings.stopSequence === 'string' ? settings.stopSequence.trim() : '',
-    systemPrompt: typeof settings.systemPrompt === 'string' ? settings.systemPrompt.trim() : ''
+    systemPrompt: typeof settings.systemPrompt === 'string' ? settings.systemPrompt.trim() : '',
+    profileId: typeof settings.profileId === 'string' ? settings.profileId.trim() : ''
   };
 }
 
 class Agent {
-  constructor(settings, { fetchImpl = globalThis.fetch, messages = [], tokenStats = null, context = {}, persist = () => {}, getMemory = () => ({ working: [], longTerm: [] }), recordShortTerm = () => {} } = {}) {
+  constructor(settings, { fetchImpl = globalThis.fetch, messages = [], tokenStats = null, context = {}, persist = () => {}, getMemory = () => ({ working: [], longTerm: [] }), getProfile = () => null, recordShortTerm = () => {} } = {}) {
     if (typeof fetchImpl !== 'function') throw new Error('Для агента необходим fetch.');
     this.fetch = fetchImpl;
     this.messages = messages.map(message => ({ ...message }));
     this.persist = persist;
     this.getMemory = getMemory;
+    this.getProfile = getProfile;
     this.recordShortTerm = recordShortTerm;
     this.tokenStats = tokenStats;
     this.context = { facts: {}, turns: [], ...structuredClone(context) };
@@ -121,7 +123,17 @@ class Agent {
   systemPrompt() {
     const branch = this.context.branches?.[this.context.activeBranch];
     const memory = this.getMemory();
+    const profile = this.getProfile(this.settings.profileId);
+    const profilePrompt = profile ? [
+      'ПРОФИЛЬ ПОЛЬЗОВАТЕЛЯ. Учитывай его в каждом ответе, если текущий запрос явно не требует иного:',
+      `Имя профиля: ${profile.name}`,
+      profile.occupation ? `Род деятельности: ${profile.occupation}` : '',
+      profile.language ? `Язык диалога: ${profile.language}` : '',
+      profile.responseFormat ? `Предпочтительный формат ответа: ${profile.responseFormat}` : '',
+      profile.constraints ? `Ограничения: ${profile.constraints}` : ''
+    ].filter(Boolean).join('\n') : '';
     return [this.settings.systemPrompt,
+      profilePrompt,
       memory.longTerm?.length ? `Долговременная память пользователя (общий профиль, решения и знания для всех чатов):\n${memory.longTerm.map(item => `- ${item.content}`).join('\n')}` : '',
       this.settings.contextStrategy === 'branching' ? 'Если пользователь просит виды или варианты, оформи каждый вариант отдельным пунктом нумерованного списка с коротким названием в начале. Подробности размещай внутри пункта.' : '',
       this.settings.contextStrategy === 'branching' && branch?.topic ? `Пользователь выбрал вариант для отдельной ветки диалога. Продолжай обсуждение этого варианта; короткие вопросы относятся к нему. Данные выбранного варианта:\n${JSON.stringify({ name: branch.name, detail: branch.topic })}` : '',
@@ -163,7 +175,7 @@ class Agent {
 Пример: facts={}, userMessage="Привет! Хочу съездить в Казань, бюджет не больше 30000 рублей, люблю тихие отели. Что посоветуешь?" → {"цель":"Поездка в Казань","ограничение.бюджет":"До 30000 рублей","предпочтение.отель":"Тихий"}.
 Пример: facts={"цель":"Поездка в Казань","ограничение.бюджет":"До 30000 рублей"}, userMessage="Бюджет теперь 40000, остальное так же" → {"цель":"Поездка в Казань","ограничение.бюджет":"До 40000 рублей"}.
 Пример: facts={"цель":"Поездка в Казань"}, userMessage="Спасибо! А что ещё?" → {"цель":"Поездка в Казань"}.`
-    }, { fetchImpl: this.fetch });
+    }, { fetchImpl: this.fetch, getProfile: this.getProfile });
     const result = await extractor.respond(JSON.stringify({ facts: this.context.facts || {}, recentMessages: this.messages.filter(message => !message.memoryCommand).slice(0, -1).slice(-this.settings.keepMessages), userMessage: content }));
     let facts;
     try { facts = JSON.parse(result); } catch { throw new AgentError('Модель вернула некорректный JSON facts.', 502); }
@@ -409,6 +421,7 @@ class AgentRegistry {
         tokenStats: this.options.store?.chats[conversationId]?.tokenStats || null,
         context: this.options.store?.chats[conversationId]?.context || {},
         getMemory: () => this.options.memoryStore?.view(conversationId) || { working: [], longTerm: [] },
+        getProfile: profileId => this.options.store?.getProfile(profileId) || null,
         recordShortTerm: messages => this.options.memoryStore?.addShortTerm(conversationId, messages),
         persist: (configuration, messages, tokenStats, context) => this.options.store?.save(conversationId, configuration, messages, tokenStats, context)
       });

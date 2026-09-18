@@ -12,6 +12,16 @@
 <body>
   <main class="app-shell">
     <aside class="history-panel" aria-label="История чатов">
+      <section class="profile-switcher" aria-labelledby="profileLabel">
+        <div id="profileLabel" class="profile-label">ПРОФИЛЬ</div>
+        <div class="profile-select-row">
+          <select id="profileSelect" aria-label="Активный профиль">
+            <option value="">Профиль не выбран</option>
+          </select>
+          <button id="editProfile" class="profile-settings-button" type="button" aria-label="Редактировать профиль" title="Редактировать профиль" disabled>⚙</button>
+        </div>
+        <button id="newProfile" class="new-profile-button" type="button"><span aria-hidden="true">+</span> Новый пользователь</button>
+      </section>
       <div class="history-header">
         <button id="newChat" class="new-chat-button" type="button"><span aria-hidden="true">+</span> Новый чат</button>
       </div>
@@ -122,6 +132,27 @@
       <div class="modal-header"><div><p class="eyebrow">АНАЛИЗ МОДЕЛИ</p><h2 id="comparisonTitle">Сравнение ответов</h2></div><button id="closeComparison" class="modal-close" type="button" aria-label="Закрыть">×</button></div>
       <div id="comparisonResult" class="comparison-result" aria-live="polite"></div>
     </div>
+  </div>
+  <div id="profileModal" class="modal" hidden role="dialog" aria-modal="true" aria-labelledby="profileModalTitle">
+    <form id="profileForm" class="modal-card profile-modal-card">
+      <div class="modal-header">
+        <div><p class="eyebrow">ПЕРСОНАЛИЗАЦИЯ</p><h2 id="profileModalTitle">Новый профиль</h2></div>
+        <button id="closeProfile" class="modal-close" type="button" aria-label="Закрыть">×</button>
+      </div>
+      <div class="profile-form-body">
+        <label class="field"><span>Название профиля</span><input id="profileName" name="name" maxlength="80" required placeholder="Например, Артём — рабочий профиль" /></label>
+        <label class="field"><span>Род деятельности</span><input id="profileOccupation" name="occupation" maxlength="240" placeholder="Например, продуктовый дизайнер в IT" /></label>
+        <label class="field"><span>Язык диалога</span><input id="profileLanguage" name="language" maxlength="120" placeholder="Например, русский; термины можно на английском" /></label>
+        <label class="field"><span>Формат ответа</span><textarea id="profileResponseFormat" name="responseFormat" maxlength="500" rows="3" placeholder="Например, кратко, сначала вывод, затем список шагов"></textarea></label>
+        <label class="field"><span>Ограничения</span><textarea id="profileConstraints" name="constraints" maxlength="1000" rows="3" placeholder="Например, без эмодзи и без сложного профессионального жаргона"></textarea></label>
+        <p id="profileFormError" class="form-error" role="alert"></p>
+      </div>
+      <div class="profile-form-actions">
+        <button id="deleteProfile" class="danger-button" type="button" hidden>Удалить профиль</button>
+        <button id="cancelProfile" class="ghost-button" type="button">Отмена</button>
+        <button id="saveProfile" class="primary-button" type="submit">Сохранить профиль</button>
+      </div>
+    </form>
   </div>
   <script src="token-counter.js"></script>
   <script src="app.js"></script>

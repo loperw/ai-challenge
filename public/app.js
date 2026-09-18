@@ -13,6 +13,12 @@ const comparisonModal = document.querySelector('#comparisonModal');
 const comparisonResult = document.querySelector('#comparisonResult');
 const closeComparisonButton = document.querySelector('#closeComparison');
 const storageKey = 'deepseek-chat-conversations';
+const profileStorageKey = 'deepseek-active-profile';
+const profileSelectEl = document.querySelector('#profileSelect');
+const editProfileButton = document.querySelector('#editProfile');
+const profileModal = document.querySelector('#profileModal');
+const profileForm = document.querySelector('#profileForm');
+const profileFormError = document.querySelector('#profileFormError');
 const defaultTemperature = 1;
 const maxTokensEl = document.querySelector('#maxTokens');
 const keepMessagesEl = document.querySelector('#keepMessages');
@@ -82,6 +88,9 @@ maxTokensEl.addEventListener('input', () => {
 promptEl.addEventListener('input', renderTokenStats);
 let chats = loadChats();
 let longTermMemory = chats.find(chat => chat.memory?.longTerm)?.memory.longTerm || [];
+let profiles = [];
+let selectedProfileId = localStorage.getItem(profileStorageKey) || '';
+let editingProfileId = '';
 let activeChatId = chats[0]?.id || createChat();
 
 function selectedProvider() {
@@ -101,11 +110,53 @@ function createChat() {
   const chat = {
     id: crypto.randomUUID(), title: 'Новый чат',
     messages: [], history: [], memory: { shortTerm: [], working: [], longTerm: structuredClone(longTermMemory || []) },
-    model: modelEl.value, provider: selectedProvider(), lastTemperature: defaultTemperature
+    model: modelEl.value, provider: selectedProvider(), lastTemperature: defaultTemperature,
+    profileId: selectedProfileId
   };
   chats.unshift(chat); saveChats(); return chat.id;
 }
 function currentChat() { return chats.find(chat => chat.id === activeChatId); }
+
+function renderProfiles() {
+  profileSelectEl.replaceChildren();
+  if (!profiles.length) {
+    const option = document.createElement('option');
+    option.value = ''; option.textContent = 'Профиль не выбран'; profileSelectEl.append(option);
+    selectedProfileId = '';
+  } else {
+    for (const profile of profiles) {
+      const option = document.createElement('option');
+      option.value = profile.id; option.textContent = profile.name; profileSelectEl.append(option);
+    }
+    if (!profiles.some(profile => profile.id === selectedProfileId)) selectedProfileId = profiles[0].id;
+    profileSelectEl.value = selectedProfileId;
+  }
+  if (selectedProfileId) localStorage.setItem(profileStorageKey, selectedProfileId);
+  else localStorage.removeItem(profileStorageKey);
+  editProfileButton.disabled = !selectedProfileId;
+}
+
+function openProfileModal(profile = null) {
+  editingProfileId = profile?.id || '';
+  document.querySelector('#profileModalTitle').textContent = profile ? 'Редактировать профиль' : 'Новый профиль';
+  document.querySelector('#saveProfile').textContent = profile ? 'Сохранить изменения' : 'Создать профиль';
+  document.querySelector('#deleteProfile').hidden = !profile;
+  for (const [id, value] of [
+    ['#profileName', profile?.name], ['#profileOccupation', profile?.occupation],
+    ['#profileLanguage', profile?.language], ['#profileResponseFormat', profile?.responseFormat],
+    ['#profileConstraints', profile?.constraints]
+  ]) document.querySelector(id).value = value || '';
+  profileFormError.textContent = '';
+  profileModal.hidden = false;
+  document.querySelector('#profileName').focus();
+}
+
+function closeProfileModal() {
+  profileModal.hidden = true;
+  editingProfileId = '';
+  profileForm.reset();
+  profileFormError.textContent = '';
+}
 function restoreChatModel(chat) {
   if (!chat?.model) return;
   const option = [...modelEl.options].find(item => item.value === chat.model && item.dataset.provider === chat.provider);
@@ -317,6 +368,64 @@ async function readStream(response, onToken, onStats = () => {}) {
   }
 }
 newChatButton.addEventListener('click', () => { activeChatId = createChat();  renderChat(); renderHistory(); promptEl.focus(); });
+profileSelectEl.addEventListener('change', () => {
+  selectedProfileId = profileSelectEl.value;
+  localStorage.setItem(profileStorageKey, selectedProfileId);
+  const chat = currentChat();
+  if (chat) { chat.profileId = selectedProfileId; saveChats(); }
+  editProfileButton.disabled = !selectedProfileId;
+});
+document.querySelector('#newProfile').addEventListener('click', () => openProfileModal());
+editProfileButton.addEventListener('click', () => openProfileModal(profiles.find(profile => profile.id === selectedProfileId)));
+document.querySelector('#closeProfile').addEventListener('click', closeProfileModal);
+document.querySelector('#cancelProfile').addEventListener('click', closeProfileModal);
+document.querySelector('#deleteProfile').addEventListener('click', async () => {
+  const profile = profiles.find(item => item.id === editingProfileId);
+  if (!profile || !window.confirm(`Удалить профиль «${profile.name}»? Это действие нельзя отменить.`)) return;
+  const deleteButton = document.querySelector('#deleteProfile');
+  deleteButton.disabled = true;
+  profileFormError.textContent = '';
+  try {
+    const response = await apiFetch(`/api/profiles/${profile.id}`, { method: 'DELETE' });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || 'Не удалось удалить профиль.');
+    profiles = profiles.filter(item => item.id !== profile.id);
+    selectedProfileId = profiles[0]?.id || '';
+    for (const chat of chats) {
+      if (chat.profileId === profile.id) chat.profileId = selectedProfileId;
+    }
+    saveChats();
+    renderProfiles();
+    closeProfileModal();
+  } catch (error) { profileFormError.textContent = error.message; }
+  finally { deleteButton.disabled = false; }
+});
+profileModal.addEventListener('click', event => { if (event.target === profileModal) closeProfileModal(); });
+profileForm.addEventListener('submit', async event => {
+  event.preventDefault();
+  const saveButton = document.querySelector('#saveProfile');
+  const profile = Object.fromEntries(new FormData(profileForm));
+  saveButton.disabled = true;
+  profileFormError.textContent = '';
+  try {
+    const response = await apiFetch(editingProfileId ? `/api/profiles/${editingProfileId}` : '/api/profiles', {
+      method: editingProfileId ? 'PUT' : 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(profile)
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || 'Не удалось сохранить профиль.');
+    const index = profiles.findIndex(item => item.id === data.profile.id);
+    if (index >= 0) profiles[index] = data.profile;
+    else profiles.unshift(data.profile);
+    selectedProfileId = data.profile.id;
+    const chat = currentChat();
+    if (chat) { chat.profileId = selectedProfileId; saveChats(); }
+    renderProfiles();
+    closeProfileModal();
+  } catch (error) { profileFormError.textContent = error.message; }
+  finally { saveButton.disabled = false; }
+});
 closeComparisonButton.addEventListener('click', () => { comparisonModal.hidden = true; });
 comparisonModal.addEventListener('click', event => { if (event.target === comparisonModal) comparisonModal.hidden = true; });
 compareChatsButton.addEventListener('click', async () => {
@@ -335,6 +444,7 @@ compareChatsButton.addEventListener('click', async () => {
       provider: selectedProvider(),
       message: comparisonPrompt(chatsWithAnswers),
       ephemeral: true,
+      profileId: selectedProfileId,
       jsonMode: false,
       temperature: defaultTemperature,
 
@@ -380,6 +490,7 @@ form.addEventListener('submit', async event => {
   const chat = currentChat(); if (!chat) return;
   chat.model = modelEl.value;
   chat.provider = selectedProvider();
+  chat.profileId = selectedProfileId;
   chat.lastTemperature = settings.temperature;
   const memoryMatch = text.match(/^\/(working|long)(?:\s+([\s\S]+))?$/i);
   if (memoryMatch) {
@@ -391,7 +502,7 @@ form.addEventListener('submit', async event => {
       const response = await apiFetch('/api/memory', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ conversationId: chat.id, type, content, settings: {
-          ...settings, model: modelEl.value, provider: selectedProvider()
+          ...settings, model: modelEl.value, provider: selectedProvider(), profileId: selectedProfileId
         } })
       });
       const data = await response.json();
@@ -428,6 +539,7 @@ form.addEventListener('submit', async event => {
       conversationId: chat.id,
       model: modelEl.value,
       provider: selectedProvider(),
+      profileId: selectedProfileId,
       message: text,
       ...settings
     }) });
@@ -486,9 +598,10 @@ document.querySelector('#clearAll').addEventListener('click', async () => {
 async function initialize() {
   sendButton.disabled = true;
   try {
-    const response = await apiFetch('/api/chats');
-    if (!response.ok) throw new Error('Не удалось загрузить историю.');
-    const data = await response.json();
+    const [response, profilesResponse] = await Promise.all([apiFetch('/api/chats'), apiFetch('/api/profiles')]);
+    if (!response.ok || !profilesResponse.ok) throw new Error('Не удалось загрузить историю и профили.');
+    const [data, profilesData] = await Promise.all([response.json(), profilesResponse.json()]);
+    profiles = Array.isArray(profilesData.profiles) ? profilesData.profiles : [];
     longTermMemory = Array.isArray(data.longTerm) ? data.longTerm : [];
     chats = data.chats.map(chat => ({
       id: chat.id, title: chat.messages.find(message => message.role === 'user' && !message.memoryCommand)?.content.slice(0, 42) || 'Новый чат',
@@ -496,10 +609,15 @@ async function initialize() {
       model: chat.settings.model, provider: chat.settings.provider, lastTemperature: chat.settings.temperature,
       maxTokens: chat.settings.maxTokens ?? '', tokenStats: chat.tokenStats, context: chat.context,
       keepMessages: chat.settings.keepMessages ?? 4, contextStrategy: chat.settings.contextStrategy ?? 'sliding',
+      profileId: chat.settings.profileId || '',
       memory: chat.memory || { shortTerm: [], working: [], longTerm: structuredClone(longTermMemory) }
     }));
+    const rememberedProfile = localStorage.getItem(profileStorageKey);
+    selectedProfileId = profiles.some(profile => profile.id === rememberedProfile) ? rememberedProfile
+      : profiles.some(profile => profile.id === chats[0]?.profileId) ? chats[0].profileId
+      : profiles[0]?.id || '';
     activeChatId = chats[0]?.id || createChat();
-    saveChats(); renderChat(); renderHistory(); sendButton.disabled = false;
+    saveChats(); renderProfiles(); renderChat(); renderHistory(); sendButton.disabled = false;
   } catch (error) { addMessage('assistant', error.message + ' Перезагрузите страницу для повторной попытки.'); }
 }
 initialize();
