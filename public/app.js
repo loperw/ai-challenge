@@ -12,7 +12,6 @@ const compareChatsButton = document.querySelector('#compareChats');
 const comparisonModal = document.querySelector('#comparisonModal');
 const comparisonResult = document.querySelector('#comparisonResult');
 const closeComparisonButton = document.querySelector('#closeComparison');
-const welcomeMessage = 'Здравствуйте! Я готов помочь. Выберите модель справа и отправьте сообщение.';
 const storageKey = 'deepseek-chat-conversations';
 const defaultTemperature = 1;
 const maxTokensEl = document.querySelector('#maxTokens');
@@ -82,6 +81,7 @@ maxTokensEl.addEventListener('input', () => {
 });
 promptEl.addEventListener('input', renderTokenStats);
 let chats = loadChats();
+let longTermMemory = chats.find(chat => chat.memory?.longTerm)?.memory.longTerm || [];
 let activeChatId = chats[0]?.id || createChat();
 
 function selectedProvider() {
@@ -100,7 +100,7 @@ function saveChats() {
 function createChat() {
   const chat = {
     id: crypto.randomUUID(), title: 'Новый чат',
-    messages: [{ role: 'assistant', content: welcomeMessage }], history: [],
+    messages: [], history: [], memory: { shortTerm: [], working: [], longTerm: structuredClone(longTermMemory || []) },
     model: modelEl.value, provider: selectedProvider(), lastTemperature: defaultTemperature
   };
   chats.unshift(chat); saveChats(); return chat.id;
@@ -187,13 +187,17 @@ function renderChat() {
   renderTokenStats();
   renderChatTitle(chat);
   messagesEl.innerHTML = '';
-  chat.messages.forEach(message => addMessage(message.role, message.content, message.pending));
+  chat.messages.forEach(message => addMessage(message.role, message.content, message.pending, message.memoryCommand, message.memoryType));
+  if (!chat.messages.length) {
+    const empty = document.createElement('div'); empty.className = 'empty-chat'; empty.textContent = 'Чем помочь?'; messagesEl.append(empty);
+  }
+  renderMemory();
   messagesEl.scrollTop = messagesEl.scrollHeight;
 }
 function chatTranscript(chat) {
   const settings = chatSettings(chat);
   const lines = chat.messages
-    .filter(message => !message.pending && message.content && message.content !== welcomeMessage)
+    .filter(message => !message.pending && message.content && !message.memoryCommand)
     .map(message => `${message.role === 'user' ? 'Пользователь' : 'Модель'}: ${message.content}`);
   return `Условия запроса: модель — ${settings.model}; температура — ${settings.temperature.toFixed(1)}.\nДиалог:\n${lines.join('\n\n')}`;
 }
@@ -236,11 +240,49 @@ modelEl.addEventListener('change', () => {
 
 
 
-function addMessage(role, content, pending = false) {
-  const item = document.createElement('article'); item.className = `message ${role}`;
+function addMessage(role, content, pending = false, memoryCommand = false, memoryType = '') {
+  const item = document.createElement('article'); item.className = `message ${role}${memoryCommand ? ' memory-command' : ''}`;
   const avatar = document.createElement('div'); avatar.className = 'avatar'; avatar.textContent = role === 'assistant' ? 'AI' : 'Я';
   const bubble = document.createElement('div'); bubble.className = `bubble${pending ? ' typing' : ''}`; bubble.textContent = content;
+  if (memoryCommand) {
+    const badge = document.createElement('span'); badge.className = 'memory-command-badge'; badge.textContent = 'Команда памяти';
+    bubble.dataset.memoryType = memoryType; bubble.append(badge);
+  }
   item.append(avatar, bubble); messagesEl.append(item); return item;
+}
+
+function renderMemoryItems(element, items, label) {
+  element.replaceChildren();
+  if (!items.length) {
+    const empty = document.createElement('p'); empty.className = 'memory-empty'; empty.textContent = 'Пока пусто'; element.append(empty); return;
+  }
+  items.forEach(item => {
+    const row = document.createElement('div'); row.className = 'memory-item';
+    const meta = document.createElement('span'); meta.textContent = label(item);
+    const content = document.createElement('p'); content.textContent = item.content;
+    row.append(meta, content); element.append(row);
+  });
+}
+
+function renderMemory() {
+  const chat = currentChat(); if (!chat) return;
+  const shortTerm = chat.memory?.shortTerm?.length ? chat.memory.shortTerm : chat.messages.filter(message => message.content && !message.pending);
+  const working = chat.memory?.working || [];
+  const longTerm = chat.memory?.longTerm || longTermMemory || [];
+  document.querySelector('#shortMemoryCount').textContent = shortTerm.length;
+  document.querySelector('#workingMemoryCount').textContent = working.length;
+  document.querySelector('#longMemoryCount').textContent = longTerm.length;
+  renderMemoryItems(document.querySelector('#shortMemoryList'), shortTerm, item => item.memoryCommand ? 'Команда памяти' : item.role === 'user' ? 'Пользователь' : 'Агент');
+  renderMemoryItems(document.querySelector('#workingMemoryList'), working, () => 'Текущая задача');
+  renderMemoryItems(document.querySelector('#longMemoryList'), longTerm, () => 'Все чаты');
+}
+
+for (const [buttonSelector, panelSelector] of [['#settingsTabButton', '#settingsTab'], ['#memoryTabButton', '#memoryTab']]) {
+  document.querySelector(buttonSelector).addEventListener('click', () => {
+    for (const button of document.querySelectorAll('.side-tab')) { button.classList.toggle('active', button.id === buttonSelector.slice(1)); button.setAttribute('aria-selected', String(button.id === buttonSelector.slice(1))); }
+    for (const panel of document.querySelectorAll('.side-tab-panel')) panel.hidden = panel.id !== panelSelector.slice(1);
+    if (panelSelector === '#memoryTab') renderMemory();
+  });
 }
 async function apiFetch(path, options) {
   try {
@@ -278,7 +320,7 @@ newChatButton.addEventListener('click', () => { activeChatId = createChat();  re
 closeComparisonButton.addEventListener('click', () => { comparisonModal.hidden = true; });
 comparisonModal.addEventListener('click', event => { if (event.target === comparisonModal) comparisonModal.hidden = true; });
 compareChatsButton.addEventListener('click', async () => {
-  const chatsWithAnswers = chats.filter(chat => chat.messages.some(message => message.role === 'assistant' && message.content && message.content !== welcomeMessage));
+  const chatsWithAnswers = chats.filter(chat => chat.messages.some(message => message.role === 'assistant' && message.content));
   comparisonModal.hidden = false;
   if (!chatsWithAnswers.length) {
     comparisonResult.textContent = 'Пока нет ответов для сравнения. Отправьте сообщения хотя бы в одном чате.';
@@ -313,7 +355,8 @@ document.querySelector('#clearChat').addEventListener('click', async event => {
     if (!response.ok) { const data = await response.json(); throw new Error(data.error || 'Ошибка соединения'); }
     chat.lastTemperature = defaultTemperature;
     chat.model = modelEl.value; chat.provider = selectedProvider();
-    chat.title = 'Новый чат'; chat.history = []; chat.messages = [{ role: 'assistant', content: 'Диалог очищен. Чем могу помочь?' }];
+    chat.title = 'Новый чат'; chat.history = []; chat.messages = [];
+    chat.memory = { shortTerm: [], working: [], longTerm: structuredClone(longTermMemory) };
     chat.tokenStats = null;
     chat.context = null;
     saveChats(); renderChat(); renderHistory();
@@ -338,10 +381,38 @@ form.addEventListener('submit', async event => {
   chat.model = modelEl.value;
   chat.provider = selectedProvider();
   chat.lastTemperature = settings.temperature;
+  const memoryMatch = text.match(/^\/(working|long)(?:\s+([\s\S]+))?$/i);
+  if (memoryMatch) {
+    const content = memoryMatch[2]?.trim();
+    if (!content) { window.alert('После команды добавьте информацию для памяти.'); return; }
+    sendButton.disabled = true;
+    try {
+      const type = memoryMatch[1].toLowerCase() === 'working' ? 'working' : 'longTerm';
+      const response = await apiFetch('/api/memory', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ conversationId: chat.id, type, content, settings: {
+          ...settings, model: modelEl.value, provider: selectedProvider()
+        } })
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Не удалось сохранить память.');
+      chat.messages = data.messages; chat.history = [...data.messages]; chat.memory = data.memory;
+      if (type === 'longTerm') {
+        longTermMemory = data.memory.longTerm;
+        for (const item of chats) { item.memory ||= { shortTerm: [], working: [], longTerm: [] }; item.memory.longTerm = structuredClone(longTermMemory); }
+      }
+      promptEl.value = ''; promptEl.style.height = 'auto'; saveChats(); renderChat(); renderHistory();
+    } catch (error) { window.alert(error.message); }
+    finally { sendButton.disabled = false; promptEl.focus({ preventScroll: true }); }
+    return;
+  }
   const previousStats = chat.tokenStats;
   const previousContext = chat.context;
   const userMessage = { role: 'user', content: text };
   chat.messages.push(userMessage); chat.history.push(userMessage);
+  chat.memory ||= { shortTerm: [], working: [], longTerm: structuredClone(longTermMemory) };
+  chat.memory.shortTerm ||= [];
+  chat.memory.shortTerm.push({ role: 'user', content: text });
   if (chat.title === 'Новый чат') chat.title = text.replace(/\s+/g, ' ').slice(0, 42);
   const assistantMessage = { role: 'assistant', content: '', pending: true };
   chat.messages.push(assistantMessage); saveChats();
@@ -350,6 +421,7 @@ form.addEventListener('submit', async event => {
   promptEl.value = ''; promptEl.style.height = 'auto'; sendButton.disabled = true; renderHistory(); renderChatTitle(chat);
   renderContextControls();
   renderTokenStats();
+  renderMemory();
   let answer = '';
   try {
     const response = await apiFetch('/api/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
@@ -371,8 +443,10 @@ form.addEventListener('submit', async event => {
     }, (stats, context) => { chat.tokenStats = stats; chat.context = context; });
     if (!answer) throw new Error('Сервис не вернул текст ответа.');
     chat.history.push({ role: 'assistant', content: answer });
+    chat.memory.shortTerm.push({ role: 'assistant', content: answer });
     if (settings.contextStrategy !== 'branching') {
-      chat.history = chat.history.slice(-Number(settings.keepMessages));
+      const recentDialogue = chat.history.filter(message => !message.memoryCommand).slice(-Number(settings.keepMessages));
+      chat.history = chat.history.filter(message => message.memoryCommand || recentDialogue.includes(message));
       chat.messages = [...chat.history];
     }
   } catch (error) { chat.history.pop(); chat.tokenStats = previousStats; chat.context = previousContext; assistantMessage.content = `Ошибка: ${error.message}`; }
@@ -391,6 +465,7 @@ form.addEventListener('submit', async event => {
     sendButton.disabled = false;
     renderContextControls();
     renderTokenStats();
+    renderMemory();
   }
 });
 
@@ -401,6 +476,7 @@ document.querySelector('#clearAll').addEventListener('click', async () => {
     const response = await apiFetch('/api/chats/clear', { method: 'POST' });
     if (!response.ok) throw new Error((await response.json()).error);
     localStorage.removeItem(storageKey); sessionStorage.removeItem(storageKey);
+    longTermMemory = [];
     chats = []; activeChatId = createChat();
     comparisonResult.textContent = ''; comparisonModal.hidden = true;
     promptEl.value = ''; renderChat(); renderHistory();
@@ -413,12 +489,14 @@ async function initialize() {
     const response = await apiFetch('/api/chats');
     if (!response.ok) throw new Error('Не удалось загрузить историю.');
     const data = await response.json();
+    longTermMemory = Array.isArray(data.longTerm) ? data.longTerm : [];
     chats = data.chats.map(chat => ({
-      id: chat.id, title: chat.messages.find(message => message.role === 'user')?.content.slice(0, 42) || 'Новый чат',
+      id: chat.id, title: chat.messages.find(message => message.role === 'user' && !message.memoryCommand)?.content.slice(0, 42) || 'Новый чат',
       messages: chat.messages, history: [...chat.messages],
       model: chat.settings.model, provider: chat.settings.provider, lastTemperature: chat.settings.temperature,
       maxTokens: chat.settings.maxTokens ?? '', tokenStats: chat.tokenStats, context: chat.context,
-      keepMessages: chat.settings.keepMessages ?? 4, contextStrategy: chat.settings.contextStrategy ?? 'sliding'
+      keepMessages: chat.settings.keepMessages ?? 4, contextStrategy: chat.settings.contextStrategy ?? 'sliding',
+      memory: chat.memory || { shortTerm: [], working: [], longTerm: structuredClone(longTermMemory) }
     }));
     activeChatId = chats[0]?.id || createChat();
     saveChats(); renderChat(); renderHistory(); sendButton.disabled = false;

@@ -31,6 +31,11 @@
       <p class="hint">Enter — отправить · Shift + Enter — новая строка</p>
     </section>
     <aside class="settings-panel">
+      <div class="side-tabs" role="tablist" aria-label="Правая панель">
+        <button id="settingsTabButton" class="side-tab active" type="button" role="tab" aria-selected="true" aria-controls="settingsTab">Настройки</button>
+        <button id="memoryTabButton" class="side-tab" type="button" role="tab" aria-selected="false" aria-controls="memoryTab">Память агента</button>
+      </div>
+      <section id="settingsTab" class="side-tab-panel" role="tabpanel" aria-labelledby="settingsTabButton">
       <div class="settings-title"><span class="settings-icon">⚙</span><div><p class="eyebrow">ПАРАМЕТРЫ</p><h2>Настройки</h2></div></div>
       <label class="field"><span>Модель</span><select id="model">
         <optgroup label="DeepSeek">
@@ -89,6 +94,26 @@
         <p id="chartScale" class="chart-scale"></p>
         <div id="tokenChart" class="token-chart" aria-label="Расход токенов по ходам"></div>
         <p id="chartTooltip" class="chart-tooltip" role="status">Здесь появится первый ход.</p>
+      </section>
+      </section>
+      <section id="memoryTab" class="side-tab-panel memory-panel" role="tabpanel" aria-labelledby="memoryTabButton" hidden>
+        <div class="settings-title"><span class="settings-icon memory-icon">⌁</span><div><p class="eyebrow">КОНТЕКСТ</p><h2>Память агента</h2></div></div>
+        <p class="memory-intro">Команды <code>/working</code> и <code>/long</code> сохраняют информацию без запроса к модели.</p>
+        <section class="memory-block short-memory" aria-labelledby="shortMemoryTitle">
+          <header><h3 id="shortMemoryTitle">Краткосрочная</h3><span id="shortMemoryCount">0</span></header>
+          <p class="memory-description">Сообщения текущего диалога</p>
+          <div id="shortMemoryList" class="memory-list"></div>
+        </section>
+        <section class="memory-block working-memory" aria-labelledby="workingMemoryTitle">
+          <header><h3 id="workingMemoryTitle">Рабочая</h3><span id="workingMemoryCount">0</span></header>
+          <p class="memory-description">Цели и ограничения текущей задачи</p>
+          <div id="workingMemoryList" class="memory-list"></div>
+        </section>
+        <section class="memory-block long-memory" aria-labelledby="longMemoryTitle">
+          <header><h3 id="longMemoryTitle">Долговременная</h3><span id="longMemoryCount">0</span></header>
+          <p class="memory-description">Профиль и знания для всех чатов</p>
+          <div id="longMemoryList" class="memory-list"></div>
+        </section>
       </section>
     </aside>
   </main>

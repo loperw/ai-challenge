@@ -15,9 +15,13 @@ if (fs.existsSync(envPath)) {
   }
 }
 
-const { HistoryStore } = require('./history-store');
-const store = new HistoryStore(path.join(__dirname, 'data', 'conversations.json'));
-const agents = new AgentRegistry({ store });
+const { SQLiteStore } = require('./sqlite-store');
+const store = new SQLiteStore(path.join(__dirname, 'data', 'agent-memory.sqlite'), {
+  legacyConversationsPath: path.join(__dirname, 'data', 'conversations.json'),
+  legacyMemoryPath: path.join(__dirname, 'data', 'memory.json')
+});
+const memoryStore = store;
+const agents = new AgentRegistry({ store, memoryStore });
 
 function sendJson(response, status, data) {
   response.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' });
@@ -87,6 +91,7 @@ async function handleReset(request, response) {
     const { conversationId } = await readBody(request);
     if (!validConversationId(conversationId)) return sendJson(response, 400, { error: 'Некорректный идентификатор диалога.' });
     agents.reset(conversationId);
+    memoryStore.removeConversation(conversationId);
     return sendJson(response, 200, { ok: true });
   } catch (error) {
     return sendJson(response, error instanceof AgentError ? error.status : 500, { error: error.message || 'Не удалось очистить диалог.' });
@@ -94,6 +99,23 @@ async function handleReset(request, response) {
 }
 
 const server = http.createServer(async (request, response) => {
+  if (request.method === 'POST' && request.url === '/api/memory') {
+    try {
+      const body = await readBody(request);
+      if (!validConversationId(body.conversationId)) throw new AgentError('Некорректный диалог.', 400);
+      if (!['working', 'longTerm'].includes(body.type)) throw new AgentError('Неизвестный тип памяти.', 400);
+      const content = typeof body.content === 'string' ? body.content.trim() : '';
+      if (!content) throw new AgentError('После команды добавьте информацию для памяти.', 400);
+      const saved = store.chats[body.conversationId];
+      const settings = saved?.settings || body.settings;
+      const agent = agents.get(body.conversationId, settings);
+      if (agent.busy) throw new AgentError('Дождитесь завершения ответа агента.', 409);
+      agent.recordMemoryCommand(body.type, content);
+      memoryStore.add(body.conversationId, body.type, content);
+      memoryStore.addShortTerm(body.conversationId, [{ role: 'user', content: `${body.type === 'working' ? '/working' : '/long'} ${content}`, memoryCommand: true, memoryType: body.type }]);
+      return sendJson(response, 200, { memory: memoryStore.view(body.conversationId), messages: agent.messages });
+    } catch (error) { return sendJson(response, error.status || 500, { error: error.message }); }
+  }
   if (request.method === 'POST' && request.url === '/api/chat/branch') {
     try {
       const body = await readBody(request);
@@ -105,9 +127,12 @@ const server = http.createServer(async (request, response) => {
       return sendJson(response, 200, { messages: agent.messages, context: agent.context, tokenStats: agent.tokenStats });
     } catch (error) { return sendJson(response, error.status || 500, { error: error.message }); }
   }
-  if (request.method === 'GET' && request.url === '/api/chats') return sendJson(response, 200, { chats: store.list() });
+  if (request.method === 'GET' && request.url === '/api/chats') return sendJson(response, 200, {
+    chats: store.list().map(chat => ({ ...chat, memory: memoryStore.view(chat.id) })),
+    longTerm: memoryStore.view('').longTerm
+  });
   if (request.method === 'POST' && request.url === '/api/chats/clear') {
-    try { agents.clear(); return sendJson(response, 200, { ok: true }); }
+    try { agents.clear(); memoryStore.clear(); return sendJson(response, 200, { ok: true }); }
     catch (error) { return sendJson(response, error.status || 500, { error: error.message }); }
   }
   if (request.method === 'POST' && request.url === '/api/chat') return handleChat(request, response);

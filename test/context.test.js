@@ -9,7 +9,8 @@ for (const provider of ['deepseek', 'openrouter', 'gemini']) {
   test(`${provider}: window, facts, branches, persistence and rollback`, async t => {
     const key = `${provider.toUpperCase()}_API_KEY`, original = process.env[key]; process.env[key] = 'test';
     const dir = mkdtempSync(join(tmpdir(), 'strategy-'));
-    t.after(() => { if (original === undefined) delete process.env[key]; else process.env[key] = original; rmSync(dir, { recursive: true, force: true }); });
+    const stores = [];
+    t.after(() => { stores.forEach(store => store.close()); if (original === undefined) delete process.env[key]; else process.env[key] = original; rmSync(dir, { recursive: true, force: true }); });
     const requests = []; let fail = false, malformed = false, factCount = 0;
     const fetchImpl = async (_, options) => {
       const body = JSON.parse(options.body); requests.push(body);
@@ -20,8 +21,9 @@ for (const provider of ['deepseek', 'openrouter', 'gemini']) {
       return { ok: true, body: { async *[Symbol.asyncIterator]() { yield Buffer.from(`data: ${JSON.stringify(payload)}\n\n`); } } };
     };
     const settings = { provider, model: provider === 'gemini' ? 'gemini-3.5-flash' : provider === 'openrouter' ? 'openrouter/free' : 'deepseek-flash', keepMessages: 2 };
-    const file = join(dir, 'chats.json');
-    let registry = new AgentRegistry({ store: new HistoryStore(file), fetchImpl });
+    const file = join(dir, 'chats.sqlite');
+    let store = new HistoryStore(file); stores.push(store);
+    let registry = new AgentRegistry({ store, fetchImpl });
     let agent = registry.get('chat', settings);
     await agent.respond('first'); await agent.respond('second'); await agent.respond('third');
     assert.equal(requests.length, 3); assert.equal(agent.messages.length, 2);
@@ -45,7 +47,8 @@ for (const provider of ['deepseek', 'openrouter', 'gemini']) {
     await agent.respond('only-B'); assert.ok(!JSON.stringify(requests.at(-1)).includes('only-A'));
     agent.branchAction('switch', branchA); assert.equal(agent.messages.at(-1).content, answerA);
     assert.deepEqual(agent.context.checkpoints[checkpoint].messages, base);
-    registry = new AgentRegistry({ store: new HistoryStore(file), fetchImpl });
+    store = new HistoryStore(file); stores.push(store);
+    registry = new AgentRegistry({ store, fetchImpl });
     agent = registry.get('chat', { ...settings, contextStrategy: 'branching' });
     assert.equal(agent.context.activeBranch, branchA);
     agent.branchAction('switch', branchB); assert.equal(agent.messages.at(-2).content, 'only-B');
