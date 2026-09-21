@@ -72,6 +72,21 @@ class SQLiteStore {
         created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS tasks (
+        id TEXT PRIMARY KEY,
+        state_json TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS task_memories (
+        id TEXT PRIMARY KEY,
+        task_id TEXT NOT NULL,
+        content TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
+      );
+      CREATE INDEX IF NOT EXISTS task_memories_task_created
+        ON task_memories(task_id, created_at);
     `);
     this.migrateLegacy(legacyConversationsPath, legacyMemoryPath);
   }
@@ -139,6 +154,11 @@ class SQLiteStore {
       .map(row => this.conversationFromRow(row));
   }
 
+  listChats() {
+    const taskIds = new Set(this.listTasks().map(task => task.id));
+    return this.list().filter(conversation => !taskIds.has(conversation.id));
+  }
+
   profileFromRow(row) {
     if (!row) return null;
     return {
@@ -192,6 +212,47 @@ class SQLiteStore {
         if (settings.profileId !== id) continue;
         update.run(JSON.stringify({ ...settings, profileId: '' }), conversation.id);
       }
+      const tasks = this.database.prepare('SELECT id, state_json FROM tasks').all();
+      const updateTask = this.database.prepare('UPDATE tasks SET state_json = ?, updated_at = ? WHERE id = ?');
+      for (const row of tasks) {
+        const task = parseJson(row.state_json, {});
+        if (task.profileId !== id) continue;
+        updateTask.run(JSON.stringify({ ...task, profileId: '', updatedAt: Date.now() }), Date.now(), row.id);
+      }
+      return true;
+    });
+  }
+
+  taskFromRow(row) {
+    if (!row) return null;
+    return parseJson(row.state_json, null);
+  }
+
+  listTasks() {
+    return this.database.prepare('SELECT * FROM tasks ORDER BY updated_at DESC, rowid DESC').all()
+      .map(row => this.taskFromRow(row));
+  }
+
+  getTask(id) {
+    return this.taskFromRow(this.database.prepare('SELECT * FROM tasks WHERE id = ?').get(id));
+  }
+
+  saveTask(task) {
+    this.database.prepare(`INSERT INTO tasks (id, state_json, created_at, updated_at)
+      VALUES (?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET state_json=excluded.state_json, updated_at=excluded.updated_at`)
+      .run(task.id, JSON.stringify(task), task.createdAt || Date.now(), task.updatedAt || Date.now());
+    return this.getTask(task.id);
+  }
+
+  removeTask(id) {
+    return this.transaction(() => {
+      this.database.prepare('DELETE FROM task_memories WHERE task_id = ?').run(id);
+      this.database.prepare('DELETE FROM tasks WHERE id = ?').run(id);
+      this.database.prepare('DELETE FROM agent_messages WHERE conversation_id = ?').run(id);
+      this.database.prepare('DELETE FROM conversations WHERE id = ?').run(id);
+      this.database.prepare('DELETE FROM messages WHERE conversation_id = ?').run(id);
+      this.database.prepare('DELETE FROM memories WHERE conversation_id = ?').run(id);
       return true;
     });
   }
@@ -207,19 +268,23 @@ class SQLiteStore {
 
   clear() {
     this.transaction(() => {
-      this.database.exec('DELETE FROM agent_messages; DELETE FROM conversations; DELETE FROM messages; DELETE FROM memories;');
+      this.database.exec('DELETE FROM agent_messages; DELETE FROM conversations; DELETE FROM messages; DELETE FROM memories; DELETE FROM task_memories; DELETE FROM tasks;');
     });
   }
 
   view(conversationId) {
     const shortTerm = this.database.prepare('SELECT role, content, memory_command, memory_type, created_at FROM messages WHERE conversation_id = ? ORDER BY position').all(conversationId)
       .map(item => ({ role: item.role, content: item.content, ...(item.memory_command && { memoryCommand: true }), ...(item.memory_type && { memoryType: item.memory_type }), createdAt: item.created_at }));
-    const memoryRows = this.database.prepare("SELECT id, scope, content, created_at FROM memories WHERE (scope = 'working' AND conversation_id = ?) OR scope = 'longTerm' ORDER BY created_at, rowid").all(conversationId);
+    const task = this.getTask(conversationId);
+    const memoryRows = this.database.prepare(task
+      ? "SELECT id, scope, content, created_at FROM memories WHERE scope = 'working' AND conversation_id = ? ORDER BY created_at, rowid"
+      : "SELECT id, scope, content, created_at FROM memories WHERE (scope = 'working' AND conversation_id = ?) OR scope = 'longTerm' ORDER BY created_at, rowid").all(conversationId);
     const map = item => ({ id: item.id, content: item.content, createdAt: item.created_at });
+    const taskLongTerm = task ? this.database.prepare('SELECT id, content, created_at FROM task_memories WHERE task_id = ? ORDER BY created_at, rowid').all(conversationId).map(map) : null;
     return {
       shortTerm,
       working: memoryRows.filter(item => item.scope === 'working').map(map),
-      longTerm: memoryRows.filter(item => item.scope === 'longTerm').map(map)
+      longTerm: taskLongTerm || memoryRows.filter(item => item.scope === 'longTerm').map(map)
     };
   }
 
@@ -232,7 +297,12 @@ class SQLiteStore {
   add(conversationId, type, content) {
     if (!['working', 'longTerm'].includes(type)) throw new Error('Неизвестный тип памяти.');
     const item = { id: crypto.randomUUID(), content, createdAt: Date.now() };
-    this.transaction(() => this.insertMemory(conversationId, type, content, item));
+    this.transaction(() => {
+      if (type === 'longTerm' && this.getTask(conversationId)) {
+        this.database.prepare('INSERT INTO task_memories (id, task_id, content, created_at) VALUES (?, ?, ?, ?)')
+          .run(item.id, conversationId, content, item.createdAt);
+      } else this.insertMemory(conversationId, type, content, item);
+    });
     return item;
   }
 

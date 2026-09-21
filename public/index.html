@@ -27,17 +27,28 @@
       </div>
       <div class="history-label">ИСТОРИЯ ЧАТОВ</div>
       <nav id="chatHistory" class="chat-history" aria-label="Список чатов"></nav>
+      <div class="history-label task-history-label">ЗАДАЧИ</div>
+      <nav id="taskHistory" class="chat-history task-history" aria-label="Список задач"></nav>
       <p class="history-note">Диалоги сохраняются между перезапусками.</p>
       <button id="clearAll" class="compare-button" type="button">Очистить всё</button>
       <button id="compareChats" class="compare-button" type="button">Сравнение ответов</button>
     </aside>
     <section class="chat-panel">
-      <header class="topbar"><div><h1 id="chatTitle">Новый чат</h1></div><button id="clearChat" class="ghost-button" title="Очистить диалог">Очистить</button></header>
+      <header class="topbar"><div><p id="entityKind" class="eyebrow">ЧАТ</p><h1 id="chatTitle">Новый чат</h1></div><button id="clearChat" class="ghost-button" title="Очистить диалог">Очистить</button></header>
+      <section id="taskStageBar" class="task-stage-bar" aria-label="Этапы задачи" hidden></section>
       <div id="messages" class="messages" aria-live="polite"></div>
       <form id="chatForm" class="composer">
         <textarea id="prompt" rows="1" placeholder="Напишите сообщение…" aria-label="Сообщение"></textarea>
-        <button id="sendButton" class="send-button" type="submit" aria-label="Отправить"><span>↑</span></button>
+        <div class="composer-buttons">
+          <button id="sendButton" class="send-button" type="submit" aria-label="Отправить"><span>↑</span></button>
+          <button id="createTask" class="create-task-button" type="button" aria-label="Создать задачу из сообщения">Задача</button>
+        </div>
       </form>
+      <div id="taskControls" class="task-controls" hidden>
+        <button id="taskPrimaryAction" class="primary-button task-primary-action" type="button">Сформировать план</button>
+        <button id="taskPause" class="ghost-button" type="button">Пауза</button>
+        <button id="revisePlan" class="ghost-button" type="button">Пересмотреть план</button>
+      </div>
       <p class="hint">Enter — отправить · Shift + Enter — новая строка</p>
     </section>
     <aside class="settings-panel">
@@ -45,6 +56,16 @@
         <button id="settingsTabButton" class="side-tab active" type="button" role="tab" aria-selected="true" aria-controls="settingsTab">Настройки</button>
         <button id="memoryTabButton" class="side-tab" type="button" role="tab" aria-selected="false" aria-controls="memoryTab">Память агента</button>
       </div>
+      <section id="processTab" class="side-tab-panel process-panel" role="tabpanel" aria-labelledby="settingsTabButton" hidden>
+        <div class="settings-title"><span id="processStatusIcon" class="settings-icon process-icon">◇</span><div><p class="eyebrow">ЗАДАЧА</p><h2 id="processTaskName">Процесс</h2></div></div>
+        <div id="processActivity" class="process-activity" role="status"></div>
+        <div class="process-state-grid">
+          <div><span>Этап</span><strong id="processStage">Планирование</strong></div>
+          <div><span>Шаг</span><strong id="processStep">—</strong></div>
+          <div><span>Ожидается</span><strong id="processExpected">Сформировать план</strong></div>
+        </div>
+        <section class="plan-block" aria-labelledby="planTitle"><header><h3 id="planTitle">Шаги плана</h3><span id="planProgress">0 / 0</span></header><ol id="planList" class="plan-list"></ol></section>
+      </section>
       <section id="settingsTab" class="side-tab-panel" role="tabpanel" aria-labelledby="settingsTabButton">
       <div class="settings-title"><span class="settings-icon">⚙</span><div><p class="eyebrow">ПАРАМЕТРЫ</p><h2>Настройки</h2></div></div>
       <label class="field"><span>Модель</span><select id="model">
@@ -152,6 +173,13 @@
         <button id="cancelProfile" class="ghost-button" type="button">Отмена</button>
         <button id="saveProfile" class="primary-button" type="submit">Сохранить профиль</button>
       </div>
+    </form>
+  </div>
+  <div id="reviseModal" class="modal" hidden role="dialog" aria-modal="true" aria-labelledby="reviseModalTitle">
+    <form id="reviseForm" class="modal-card profile-modal-card">
+      <div class="modal-header"><div><p class="eyebrow">ПЕРЕСМОТР ПЛАНА</p><h2 id="reviseModalTitle">Что изменить в плане?</h2></div><button id="closeRevise" class="modal-close" type="button" aria-label="Закрыть">×</button></div>
+      <div class="profile-form-body"><label class="field"><span>Изменения и причины</span><textarea id="reviseReason" name="reason" maxlength="2000" rows="5" required placeholder="Например, добавь проверку доступности перед публикацией"></textarea></label><p id="reviseFormError" class="form-error" role="alert"></p></div>
+      <div class="profile-form-actions"><button id="cancelRevise" class="ghost-button" type="button">Отмена</button><button id="submitRevise" class="primary-button" type="submit">Пересмотреть план</button></div>
     </form>
   </div>
   <script src="token-counter.js"></script>

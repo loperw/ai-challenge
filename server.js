@@ -2,6 +2,7 @@ const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
 const { Agent, AgentError, AgentRegistry } = require('./agent');
+const { createTask, transitionTask, TaskStateError } = require('./task-state');
 
 const publicDir = path.join(__dirname, 'public');
 const mimeTypes = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'application/javascript; charset=utf-8' };
@@ -71,6 +72,14 @@ async function handleChat(request, response) {
       return sendJson(response, 400, { error: 'Некорректный идентификатор диалога.' });
     }
 
+    const task = body.ephemeral ? null : store.getTask(body.conversationId);
+    const taskContext = task ? [
+      'РЕЖИМ ЗАДАЧИ. Это отдельная сущность со своей памятью и профилем.',
+      `Название: ${task.name}`,
+      `Описание результата: ${task.description}`,
+      `Этап: ${task.stage}; текущий шаг: ${task.currentStep + 1}; ожидаемое действие: ${task.expectedAction}.`,
+      task.plan.length ? `Утверждённый или подготовленный план:\n${task.plan.map((step, index) => `${index + 1}. [${step.done ? 'готово' : 'не готово'}] ${step.title}`).join('\n')}` : ''
+    ].filter(Boolean).join('\n') : '';
     const settings = {
       provider: body.provider,
       model: body.model,
@@ -81,7 +90,8 @@ async function handleChat(request, response) {
       contextStrategy: body.contextStrategy,
       stopSequence: body.stopSequence,
       profileId: body.profileId,
-      systemPrompt: process.env.AGENT_SYSTEM_PROMPT || ''
+      systemPrompt: [process.env.AGENT_SYSTEM_PROMPT || '', taskContext].filter(Boolean).join('\n\n'),
+      taskMode: Boolean(task)
     };
     if (settings.profileId && !store.getProfile(settings.profileId)) {
       return sendJson(response, 400, { error: 'Выбранный профиль не найден.' });
@@ -92,7 +102,9 @@ async function handleChat(request, response) {
 
     await agent.respond(body.message, {
       onStart: () => startStream(response),
-      onToken: token => writeToken(response, token)
+      onToken: token => writeToken(response, token),
+      hiddenUserMessage: Boolean(task && body.taskAction),
+      displayUserMessage: task && body.taskAction ? body.taskActionLabel : ''
     });
     response.write(`data: ${JSON.stringify({ tokenStats: agent.tokenStats, context: agent.context, messages: agent.messages })}\n\n`);
     response.end('data: [DONE]\n\n');
@@ -118,6 +130,66 @@ async function handleReset(request, response) {
 }
 
 const server = http.createServer(async (request, response) => {
+  if (request.method === 'GET' && request.url === '/api/tasks') {
+    const chats = store.chats;
+    return sendJson(response, 200, { tasks: store.listTasks().map(task => ({
+      ...task,
+      conversation: chats[task.id] || null,
+      memory: store.view(task.id)
+    })) });
+  }
+  if (request.method === 'POST' && request.url === '/api/tasks') {
+    try {
+      const body = await readBody(request);
+      if (body.profileId && !store.getProfile(body.profileId)) throw new TaskStateError('Выбранный профиль не найден.', 400);
+      const task = store.saveTask(createTask(body));
+      const initialMessage = { role: 'user', content: task.description };
+      const settings = {
+        provider: body.provider,
+        model: body.model,
+        jsonMode: Boolean(body.jsonMode),
+        temperature: body.temperature ?? 1,
+        maxTokens: body.maxTokens,
+        keepMessages: body.keepMessages ?? 100,
+        contextStrategy: body.contextStrategy || 'sliding',
+        profileId: task.profileId,
+        taskMode: true
+      };
+      store.save(task.id, settings, [initialMessage], null, { facts: {}, turns: [] });
+      store.addShortTerm(task.id, [initialMessage]);
+      return sendJson(response, 201, { task: { ...task, conversation: store.chats[task.id], memory: store.view(task.id) } });
+    } catch (error) {
+      return sendJson(response, error.status || 500, { error: error.message || 'Не удалось создать задачу.' });
+    }
+  }
+  const taskStateRoute = request.url.match(/^\/api\/tasks\/([a-f0-9-]+)\/state$/i);
+  if (request.method === 'POST' && taskStateRoute) {
+    try {
+      const current = store.getTask(taskStateRoute[1]);
+      if (!current) throw new TaskStateError('Задача не найдена.', 404);
+      const body = await readBody(request);
+      if (body.event === 'SET_PROFILE' && body.profileId && !store.getProfile(body.profileId)) throw new TaskStateError('Выбранный профиль не найден.', 400);
+      const task = store.saveTask(transitionTask(current, body.event, body));
+      const actionLabel = { PAUSE: 'Пауза', RESUME: 'Продолжить' }[body.event];
+      if (actionLabel) {
+        const conversation = store.chats[task.id];
+        if (conversation) agents.get(task.id, conversation.settings).recordActionMessage(actionLabel);
+      }
+      return sendJson(response, 200, { task, messages: store.chats[task.id]?.messages || [], memory: store.view(task.id) });
+    } catch (error) {
+      return sendJson(response, error.status || 500, { error: error.message || 'Не удалось изменить состояние задачи.' });
+    }
+  }
+  const taskRoute = request.url.match(/^\/api\/tasks\/([a-f0-9-]+)$/i);
+  if (request.method === 'DELETE' && taskRoute) {
+    try {
+      agents.reset(taskRoute[1]);
+      store.removeTask(taskRoute[1]);
+      return sendJson(response, 200, { ok: true });
+    } catch (error) {
+      return sendJson(response, error.status || 500, { error: error.message || 'Не удалось удалить задачу.' });
+    }
+  }
   if (request.method === 'GET' && request.url === '/api/profiles') {
     return sendJson(response, 200, { profiles: store.listProfiles() });
   }
@@ -168,7 +240,7 @@ const server = http.createServer(async (request, response) => {
     } catch (error) { return sendJson(response, error.status || 500, { error: error.message }); }
   }
   if (request.method === 'GET' && request.url === '/api/chats') return sendJson(response, 200, {
-    chats: store.list().map(chat => ({ ...chat, memory: memoryStore.view(chat.id) })),
+    chats: store.listChats().map(chat => ({ ...chat, memory: memoryStore.view(chat.id) })),
     longTerm: memoryStore.view('').longTerm
   });
   if (request.method === 'POST' && request.url === '/api/chats/clear') {

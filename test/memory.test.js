@@ -6,6 +6,7 @@ const { join } = require('node:path');
 const { MemoryStore } = require('../memory-store');
 const { Agent } = require('../agent');
 const { SQLiteStore } = require('../sqlite-store');
+const { createTask } = require('../task-state');
 
 test('imports legacy JSON into SQLite once', t => {
   const directory = mkdtempSync(join(tmpdir(), 'agent-migration-'));
@@ -125,4 +126,42 @@ test('selected profile is added to every agent system prompt', () => {
   assert.match(prompt, /Язык диалога: Русский/);
   assert.match(prompt, /Сначала вывод, затем пункты/);
   assert.match(prompt, /Ограничения: Без эмодзи/);
+});
+
+test('each task keeps its own long-term memory and profile', t => {
+  const directory = mkdtempSync(join(tmpdir(), 'task-memory-'));
+  const file = join(directory, 'tasks.sqlite');
+  const store = new SQLiteStore(file);
+  t.after(() => { store.close(); rmSync(directory, { recursive: true, force: true }); });
+  const profileA = store.createProfile({ name: 'A', occupation: '', language: '', responseFormat: '', constraints: '' });
+  const profileB = store.createProfile({ name: 'B', occupation: '', language: '', responseFormat: '', constraints: '' });
+  const taskA = store.saveTask(createTask({ name: 'Первая', description: 'Цель A', profileId: profileA.id }));
+  const taskB = store.saveTask(createTask({ name: 'Вторая', description: 'Цель B', profileId: profileB.id }));
+  store.save(taskA.id, { provider: 'deepseek', model: 'deepseek-flash' }, [{ role: 'user', content: 'Цель A' }]);
+  store.save('ordinary-chat', { provider: 'deepseek', model: 'deepseek-flash' }, [{ role: 'user', content: 'Обычный чат' }]);
+  store.add(taskA.id, 'longTerm', 'Память A');
+  store.add(taskB.id, 'longTerm', 'Память B');
+  assert.deepEqual(store.view(taskA.id).longTerm.map(item => item.content), ['Память A']);
+  assert.deepEqual(store.view(taskB.id).longTerm.map(item => item.content), ['Память B']);
+  assert.equal(store.getTask(taskA.id).profileId, profileA.id);
+  assert.equal(store.getTask(taskB.id).profileId, profileB.id);
+  assert.deepEqual(store.listChats().map(chat => chat.id), ['ordinary-chat']);
+});
+
+test('task action label is visible while hidden instruction alone reaches agent context', async () => {
+  const recorded = [];
+  let sentContext;
+  const agent = new Agent({ provider: 'deepseek', model: 'deepseek-flash' }, {
+    recordShortTerm: messages => recorded.push(...messages)
+  });
+  agent.createCompletion = async function () { sentContext = structuredClone(this.contextMessages()); return {}; };
+  agent.readCompletion = async function* () { yield 'Что будет происходить и план'; };
+  await agent.respond('Внутренняя команда планирования', { hiddenUserMessage: true, displayUserMessage: 'Сформировать план' });
+  assert.equal(agent.messages[0].actionMessage, true);
+  assert.equal(agent.messages[1].hidden, true);
+  assert.deepEqual(sentContext, [{ role: 'user', content: 'Внутренняя команда планирования', hidden: true }]);
+  assert.deepEqual(recorded, [
+    { role: 'user', content: 'Сформировать план', actionMessage: true },
+    { role: 'assistant', content: 'Что будет происходить и план' }
+  ]);
 });
