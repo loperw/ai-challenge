@@ -1,7 +1,7 @@
 const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
-const { Agent, AgentError, AgentRegistry } = require('./agent');
+const { Agent, AgentError, AgentRegistry, enforceStateTransitionInvariants } = require('./agent');
 const { createTask, transitionTask, TaskStateError } = require('./task-state');
 
 const publicDir = path.join(__dirname, 'public');
@@ -65,6 +65,15 @@ function profileFields(body) {
   return profile;
 }
 
+function invariantFields(body) {
+  const content = typeof body?.content === 'string' ? body.content.trim() : '';
+  const scope = typeof body?.scope === 'string' ? body.scope : '';
+  if (!content) throw new AgentError('Введите текст инварианта.', 400);
+  if (content.length > 1000) throw new AgentError('Инвариант не должен превышать 1000 символов.', 400);
+  if (!['conversation', 'task', 'stateMachine', 'global'].includes(scope)) throw new AgentError('Неизвестная область инварианта.', 400);
+  return { content, scope };
+}
+
 async function handleChat(request, response) {
   try {
     const body = await readBody(request);
@@ -97,7 +106,10 @@ async function handleChat(request, response) {
       return sendJson(response, 400, { error: 'Выбранный профиль не найден.' });
     }
     const agent = body.ephemeral
-      ? new Agent(settings, { getProfile: profileId => store.getProfile(profileId) })
+      ? new Agent(settings, {
+        getProfile: profileId => store.getProfile(profileId),
+        getInvariants: () => store.getInvariants('__ephemeral__')
+      })
       : agents.get(body.conversationId, settings);
 
     await agent.respond(body.message, {
@@ -135,7 +147,8 @@ const server = http.createServer(async (request, response) => {
     return sendJson(response, 200, { tasks: store.listTasks().map(task => ({
       ...task,
       conversation: chats[task.id] || null,
-      memory: store.view(task.id)
+      memory: store.view(task.id),
+      invariants: store.listInvariants(task.id)
     })) });
   }
   if (request.method === 'POST' && request.url === '/api/tasks') {
@@ -157,7 +170,7 @@ const server = http.createServer(async (request, response) => {
       };
       store.save(task.id, settings, [initialMessage], null, { facts: {}, turns: [] });
       store.addShortTerm(task.id, [initialMessage]);
-      return sendJson(response, 201, { task: { ...task, conversation: store.chats[task.id], memory: store.view(task.id) } });
+      return sendJson(response, 201, { task: { ...task, conversation: store.chats[task.id], memory: store.view(task.id), invariants: store.listInvariants(task.id) } });
     } catch (error) {
       return sendJson(response, error.status || 500, { error: error.message || 'Не удалось создать задачу.' });
     }
@@ -169,7 +182,17 @@ const server = http.createServer(async (request, response) => {
       if (!current) throw new TaskStateError('Задача не найдена.', 404);
       const body = await readBody(request);
       if (body.event === 'SET_PROFILE' && body.profileId && !store.getProfile(body.profileId)) throw new TaskStateError('Выбранный профиль не найден.', 400);
-      const task = store.saveTask(transitionTask(current, body.event, body));
+      const nextTask = transitionTask(current, body.event, body);
+      const stateInvariants = body.event === 'SET_PROFILE' ? [] : store.getStateMachineInvariants(current.id);
+      if (stateInvariants.length) {
+        const conversation = store.chats[current.id];
+        if (!conversation) throw new TaskStateError('Контекст задачи не найден.', 404);
+        const agent = agents.get(current.id, conversation.settings);
+        await enforceStateTransitionInvariants(agent, stateInvariants, {
+          current, next: nextTask, event: body.event, userConsent: body.userConsent
+        });
+      }
+      const task = store.saveTask(nextTask);
       const actionLabel = { PAUSE: 'Пауза', RESUME: 'Продолжить' }[body.event];
       if (actionLabel) {
         const conversation = store.chats[task.id];
@@ -228,6 +251,31 @@ const server = http.createServer(async (request, response) => {
       return sendJson(response, 200, { memory: memoryStore.view(body.conversationId), messages: agent.messages });
     } catch (error) { return sendJson(response, error.status || 500, { error: error.message }); }
   }
+  if (request.method === 'POST' && request.url === '/api/invariants') {
+    try {
+      const body = await readBody(request);
+      if (!validConversationId(body.conversationId)) throw new AgentError('Некорректный диалог.', 400);
+      if (agents.agents.get(body.conversationId)?.busy) throw new AgentError('Дождитесь завершения ответа агента.', 409);
+      const invariant = invariantFields(body);
+      const task = store.getTask(body.conversationId);
+      if (task && invariant.scope === 'conversation') invariant.scope = 'task';
+      if (!task && ['task', 'stateMachine'].includes(invariant.scope)) throw new AgentError('Эта область доступна только для задачи.', 400);
+      const existing = store.listInvariants(body.conversationId);
+      if (existing.filter(item => item.scope === invariant.scope).length >= 50) throw new AgentError('Можно задать не более 50 инвариантов в одной области.', 400);
+      const saved = store.addInvariant(body.conversationId, invariant.scope, invariant.content);
+      return sendJson(response, 201, { invariant: saved, invariants: store.listInvariants(body.conversationId) });
+    } catch (error) { return sendJson(response, error.status || 500, { error: error.message || 'Не удалось сохранить инварианты.' }); }
+  }
+  const invariantRoute = request.url.match(/^\/api\/invariants\/([a-f0-9-]+)$/i);
+  if (request.method === 'DELETE' && invariantRoute) {
+    try {
+      const invariant = store.getInvariant(invariantRoute[1]);
+      if (!invariant) return sendJson(response, 404, { error: 'Инвариант не найден.' });
+      if (invariant.scope !== 'global' && agents.agents.get(invariant.ownerId)?.busy) throw new AgentError('Дождитесь завершения ответа агента.', 409);
+      store.removeInvariant(invariantRoute[1]);
+      return sendJson(response, 200, { ok: true });
+    } catch (error) { return sendJson(response, error.status || 500, { error: error.message || 'Не удалось удалить инвариант.' }); }
+  }
   if (request.method === 'POST' && request.url === '/api/chat/branch') {
     try {
       const body = await readBody(request);
@@ -240,8 +288,9 @@ const server = http.createServer(async (request, response) => {
     } catch (error) { return sendJson(response, error.status || 500, { error: error.message }); }
   }
   if (request.method === 'GET' && request.url === '/api/chats') return sendJson(response, 200, {
-    chats: store.listChats().map(chat => ({ ...chat, memory: memoryStore.view(chat.id) })),
-    longTerm: memoryStore.view('').longTerm
+    chats: store.listChats().map(chat => ({ ...chat, memory: memoryStore.view(chat.id), invariants: store.listInvariants(chat.id) })),
+    longTerm: memoryStore.view('').longTerm,
+    globalInvariants: store.listGlobalInvariants()
   });
   if (request.method === 'POST' && request.url === '/api/chats/clear') {
     try { agents.clear(); memoryStore.clear(); return sendJson(response, 200, { ok: true }); }

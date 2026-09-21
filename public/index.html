@@ -34,7 +34,7 @@
       <button id="compareChats" class="compare-button" type="button">Сравнение ответов</button>
     </aside>
     <section class="chat-panel">
-      <header class="topbar"><div><p id="entityKind" class="eyebrow">ЧАТ</p><h1 id="chatTitle">Новый чат</h1></div><button id="clearChat" class="ghost-button" title="Очистить диалог">Очистить</button></header>
+      <header class="topbar"><div><p id="entityKind" class="eyebrow">ЧАТ</p><h1 id="chatTitle">Новый чат</h1></div><div class="topbar-actions"><button id="openInvariants" class="invariant-button" type="button" title="Задать непреложные ограничения"><span aria-hidden="true">◆</span> Инварианты <strong id="invariantCount">0</strong></button><button id="clearChat" class="ghost-button" title="Очистить диалог">Очистить</button></div></header>
       <section id="taskStageBar" class="task-stage-bar" aria-label="Этапы задачи" hidden></section>
       <div id="messages" class="messages" aria-live="polite"></div>
       <form id="chatForm" class="composer">
@@ -172,6 +172,34 @@
         <button id="deleteProfile" class="danger-button" type="button" hidden>Удалить профиль</button>
         <button id="cancelProfile" class="ghost-button" type="button">Отмена</button>
         <button id="saveProfile" class="primary-button" type="submit">Сохранить профиль</button>
+      </div>
+    </form>
+  </div>
+  <div id="invariantModal" class="modal" hidden role="dialog" aria-modal="true" aria-labelledby="invariantModalTitle">
+    <form id="invariantForm" class="modal-card profile-modal-card">
+      <div class="modal-header">
+        <div><p class="eyebrow">НЕПРИКОСНОВЕННЫЕ ОГРАНИЧЕНИЯ</p><h2 id="invariantModalTitle">Инварианты ассистента</h2></div>
+        <button id="closeInvariants" class="modal-close" type="button" aria-label="Закрыть">×</button>
+      </div>
+      <div class="profile-form-body">
+        <div class="invariant-explainer">
+          <strong>Что такое инвариант?</strong>
+          <p>Это правило для ответов, решений и действий ассистента. Оно не ограничивает форму или содержание ваших сообщений. Глобальные правила действуют везде, правила чата или задачи входят в их собственную память, а правила state machine блокируют запрещённые переходы. Перед отправкой ассистент проверяет и при необходимости исправляет свой ответ.</p>
+        </div>
+        <label class="field" for="invariantScope"><span>Где действует правило</span><select id="invariantScope"></select></label>
+        <div class="invariant-add-row">
+          <label class="field" for="invariantInput"><span>Новый инвариант</span><input id="invariantInput" maxlength="1000" placeholder="Например: не переходить к выполнению без согласия пользователя" /></label>
+          <button id="addInvariant" class="primary-button" type="submit">Добавить</button>
+        </div>
+        <small>Каждое добавление создаёт отдельный инвариант. Правила хранятся отдельно от переписки и изменяются только здесь.</small>
+        <p id="invariantFormError" class="form-error" role="alert"></p>
+        <section class="invariant-list-block" aria-labelledby="invariantListTitle">
+          <header><h3 id="invariantListTitle">Список инвариантов</h3><span id="invariantListCount">0</span></header>
+          <div id="invariantList" class="invariant-list"></div>
+        </section>
+      </div>
+      <div class="profile-form-actions">
+        <button id="cancelInvariants" class="primary-button" type="button">Готово</button>
       </div>
     </form>
   </div>

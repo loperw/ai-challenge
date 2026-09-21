@@ -87,8 +87,47 @@ class SQLiteStore {
       );
       CREATE INDEX IF NOT EXISTS task_memories_task_created
         ON task_memories(task_id, created_at);
+      CREATE TABLE IF NOT EXISTS invariants (
+        id TEXT PRIMARY KEY,
+        owner_id TEXT NOT NULL,
+        scope TEXT NOT NULL CHECK (scope IN ('conversation', 'task', 'stateMachine', 'global')),
+        position INTEGER NOT NULL,
+        content TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        UNIQUE (owner_id, scope, position)
+      );
     `);
+    this.ensureInvariantSchema();
     this.migrateLegacy(legacyConversationsPath, legacyMemoryPath);
+  }
+
+  ensureInvariantSchema() {
+    const columns = this.database.prepare('PRAGMA table_info(invariants)').all().map(column => column.name);
+    if (columns.includes('scope') && columns.includes('id')) {
+      this.database.exec('CREATE INDEX IF NOT EXISTS invariants_owner_position ON invariants(owner_id, scope, position);');
+      return;
+    }
+    this.database.exec(`
+      DROP INDEX IF EXISTS invariants_owner_position;
+      ALTER TABLE invariants RENAME TO invariants_legacy;
+      CREATE TABLE invariants (
+        id TEXT PRIMARY KEY,
+        owner_id TEXT NOT NULL,
+        scope TEXT NOT NULL CHECK (scope IN ('conversation', 'task', 'stateMachine', 'global')),
+        position INTEGER NOT NULL,
+        content TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        UNIQUE (owner_id, scope, position)
+      );
+      INSERT INTO invariants (id, owner_id, scope, position, content, created_at, updated_at)
+        SELECT lower(hex(randomblob(16))), owner_id,
+          CASE WHEN owner_id IN (SELECT id FROM tasks) THEN 'task' ELSE 'conversation' END,
+          position, content, created_at, updated_at FROM invariants_legacy;
+      DROP TABLE invariants_legacy;
+      CREATE INDEX invariants_owner_position ON invariants(owner_id, scope, position);
+    `);
   }
 
   transaction(action) {
@@ -157,6 +196,61 @@ class SQLiteStore {
   listChats() {
     const taskIds = new Set(this.listTasks().map(task => task.id));
     return this.list().filter(conversation => !taskIds.has(conversation.id));
+  }
+
+  invariantFromRow(row) {
+    return row ? { id: row.id, ownerId: row.owner_id, scope: row.scope, content: row.content,
+      createdAt: row.created_at, updatedAt: row.updated_at } : null;
+  }
+
+  listInvariants(ownerId) {
+    if (!ownerId) return [];
+    return this.database.prepare(`SELECT * FROM invariants
+      WHERE scope = 'global' OR owner_id = ?
+      ORDER BY CASE scope WHEN 'global' THEN 0 WHEN 'stateMachine' THEN 2 ELSE 1 END, created_at, position`)
+      .all(ownerId).map(row => this.invariantFromRow(row));
+  }
+
+  listGlobalInvariants() {
+    return this.database.prepare("SELECT * FROM invariants WHERE scope = 'global' ORDER BY created_at, position")
+      .all().map(row => this.invariantFromRow(row));
+  }
+
+  getInvariants(ownerId) {
+    if (!ownerId) return [];
+    return this.database.prepare(`SELECT content FROM invariants
+      WHERE (scope = 'global' OR owner_id = ?) AND scope != 'stateMachine'
+      ORDER BY CASE scope WHEN 'global' THEN 0 ELSE 1 END, created_at, position`)
+      .all(ownerId).map(row => row.content);
+  }
+
+  getStateMachineInvariants(taskId) {
+    if (!taskId) return [];
+    return this.database.prepare("SELECT content FROM invariants WHERE owner_id = ? AND scope = 'stateMachine' ORDER BY created_at, position")
+      .all(taskId).map(row => row.content);
+  }
+
+  addInvariant(ownerId, scope, content) {
+    const normalizedScope = ['conversation', 'task', 'stateMachine', 'global'].includes(scope) ? scope : 'conversation';
+    const normalizedOwner = normalizedScope === 'global' ? '__global__' : ownerId;
+    const existing = this.database.prepare('SELECT * FROM invariants WHERE owner_id = ? AND scope = ? AND content = ?')
+      .get(normalizedOwner, normalizedScope, content);
+    if (existing) return this.invariantFromRow(existing);
+    const now = Date.now();
+    const position = this.database.prepare('SELECT COALESCE(MAX(position), -1) + 1 AS position FROM invariants WHERE owner_id = ? AND scope = ?')
+      .get(normalizedOwner, normalizedScope).position;
+    const id = crypto.randomUUID();
+    this.database.prepare('INSERT INTO invariants (id, owner_id, scope, position, content, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
+      .run(id, normalizedOwner, normalizedScope, position, content, now, now);
+    return this.invariantFromRow(this.database.prepare('SELECT * FROM invariants WHERE id = ?').get(id));
+  }
+
+  getInvariant(id) {
+    return this.invariantFromRow(this.database.prepare('SELECT * FROM invariants WHERE id = ?').get(id));
+  }
+
+  removeInvariant(id) {
+    return Boolean(this.database.prepare('DELETE FROM invariants WHERE id = ?').run(id).changes);
   }
 
   profileFromRow(row) {
@@ -253,6 +347,7 @@ class SQLiteStore {
       this.database.prepare('DELETE FROM conversations WHERE id = ?').run(id);
       this.database.prepare('DELETE FROM messages WHERE conversation_id = ?').run(id);
       this.database.prepare('DELETE FROM memories WHERE conversation_id = ?').run(id);
+      this.database.prepare('DELETE FROM invariants WHERE owner_id = ?').run(id);
       return true;
     });
   }
@@ -263,12 +358,13 @@ class SQLiteStore {
       this.database.prepare('DELETE FROM conversations WHERE id = ?').run(id);
       this.database.prepare('DELETE FROM messages WHERE conversation_id = ?').run(id);
       this.database.prepare("DELETE FROM memories WHERE scope = 'working' AND conversation_id = ?").run(id);
+      this.database.prepare('DELETE FROM invariants WHERE owner_id = ?').run(id);
     });
   }
 
   clear() {
     this.transaction(() => {
-      this.database.exec('DELETE FROM agent_messages; DELETE FROM conversations; DELETE FROM messages; DELETE FROM memories; DELETE FROM task_memories; DELETE FROM tasks;');
+      this.database.exec('DELETE FROM agent_messages; DELETE FROM conversations; DELETE FROM messages; DELETE FROM memories; DELETE FROM task_memories; DELETE FROM tasks; DELETE FROM invariants;');
     });
   }
 

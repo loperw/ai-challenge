@@ -26,6 +26,12 @@ const editProfileButton = document.querySelector('#editProfile');
 const profileModal = document.querySelector('#profileModal');
 const profileForm = document.querySelector('#profileForm');
 const profileFormError = document.querySelector('#profileFormError');
+const invariantModal = document.querySelector('#invariantModal');
+const invariantForm = document.querySelector('#invariantForm');
+const invariantInput = document.querySelector('#invariantInput');
+const invariantScope = document.querySelector('#invariantScope');
+const invariantList = document.querySelector('#invariantList');
+const invariantFormError = document.querySelector('#invariantFormError');
 const defaultTemperature = 1;
 const maxTokensEl = document.querySelector('#maxTokens');
 const keepMessagesEl = document.querySelector('#keepMessages');
@@ -95,6 +101,7 @@ maxTokensEl.addEventListener('input', () => {
 promptEl.addEventListener('input', renderTokenStats);
 let chats = loadChats();
 let tasks = [];
+let globalInvariants = chats.flatMap(chat => chat.invariants || []).filter(item => item?.scope === 'global');
 let longTermMemory = chats.find(chat => chat.memory?.longTerm)?.memory.longTerm || [];
 let profiles = [];
 let selectedProfileId = localStorage.getItem(profileStorageKey) || '';
@@ -120,7 +127,7 @@ function saveChats() {
 function createChat() {
   const chat = {
     id: crypto.randomUUID(), title: 'Новый чат',
-    messages: [], history: [], memory: { shortTerm: [], working: [], longTerm: structuredClone(longTermMemory || []) },
+    messages: [], history: [], invariants: structuredClone(globalInvariants || []), memory: { shortTerm: [], working: [], longTerm: structuredClone(longTermMemory || []) },
     model: modelEl.value, provider: selectedProvider(), lastTemperature: defaultTemperature,
     profileId: selectedProfileId
   };
@@ -272,14 +279,24 @@ function renderChat() {
   renderContextControls();
   renderTokenStats();
   renderChatTitle(chat);
+  renderInvariantControl();
   renderWorkspaceMode();
   messagesEl.innerHTML = '';
-  visibleMessages(chat).forEach(message => addMessage(message.role, message.content, message.pending, message.memoryCommand, message.memoryType));
+  visibleMessages(chat).forEach(message => addMessage(message.role, message.content, message.pending, message.memoryCommand, message.memoryType, message.invariantRefusal));
   if (!visibleMessages(chat).length) {
     const empty = document.createElement('div'); empty.className = 'empty-chat'; empty.textContent = 'Чем помочь?'; messagesEl.append(empty);
   }
   renderMemory();
   messagesEl.scrollTop = messagesEl.scrollHeight;
+}
+function renderInvariantControl() {
+  const chat = currentChat();
+  const count = Array.isArray(chat?.invariants) ? chat.invariants.length : 0;
+  document.querySelector('#invariantCount').textContent = String(count);
+  document.querySelector('#openInvariants').classList.toggle('has-invariants', count > 0);
+  document.querySelector('#openInvariants').title = count
+    ? `Задано инвариантов: ${count}. Нажмите, чтобы изменить.`
+    : 'Задать непреложные ограничения';
 }
 function stageLabel(stage) {
   return { planning: 'Планирование', execution: 'Выполнение', validation: 'Проверка', done: 'Готово' }[stage] || stage;
@@ -392,7 +409,23 @@ modelEl.addEventListener('change', () => {
 
 
 
-function addMessage(role, content, pending = false, memoryCommand = false, memoryType = '') {
+function setInvariantRefusalMark(item, enabled) {
+  item.classList.toggle('invariant-refusal', enabled);
+  const body = item.querySelector('.message-body');
+  if (!body) return;
+  const currentBadge = body.querySelector('.invariant-refusal-badge');
+  if (!enabled) {
+    currentBadge?.remove();
+    return;
+  }
+  if (currentBadge) return;
+  const badge = document.createElement('span');
+  badge.className = 'invariant-refusal-badge';
+  badge.textContent = 'Запрос не выполнен · конфликт с инвариантом';
+  body.insertBefore(badge, body.querySelector('.bubble'));
+}
+
+function addMessage(role, content, pending = false, memoryCommand = false, memoryType = '', invariantRefusal = false) {
   const item = document.createElement('article'); item.className = `message ${role}${memoryCommand ? ' memory-command' : ''}`;
   const avatar = document.createElement('div'); avatar.className = 'avatar'; avatar.textContent = role === 'assistant' ? 'A' : 'Я';
   const bubble = document.createElement('div'); bubble.className = `bubble${pending ? ' typing' : ''}`; bubble.textContent = content;
@@ -404,6 +437,7 @@ function addMessage(role, content, pending = false, memoryCommand = false, memor
     const body = document.createElement('div'); body.className = 'message-body';
     const author = document.createElement('span'); author.className = 'message-author'; author.textContent = 'Агент';
     body.append(author, bubble); item.append(avatar, body);
+    setInvariantRefusalMark(item, Boolean(invariantRefusal));
   } else item.append(avatar, bubble);
   messagesEl.append(item); return item;
 }
@@ -478,6 +512,90 @@ function renderMemory() {
 }
 document.querySelector('#settingsTabButton').addEventListener('click', () => { sidePanel = 'primary'; renderWorkspaceMode(); });
 document.querySelector('#memoryTabButton').addEventListener('click', () => { sidePanel = 'memory'; renderWorkspaceMode(); renderMemory(); });
+
+function closeInvariantModal() {
+  invariantModal.hidden = true;
+  invariantFormError.textContent = '';
+}
+const invariantScopeLabels = {
+  conversation: 'Текущий чат', task: 'Память задачи', stateMachine: 'State machine', global: 'Глобальная память'
+};
+function syncGlobalInvariants(records) {
+  const globals = records.filter(item => item.scope === 'global');
+  globalInvariants = structuredClone(globals);
+  for (const entity of [...chats, ...tasks]) {
+    entity.invariants = [...globals, ...(entity.invariants || []).filter(item => item.scope !== 'global')];
+  }
+}
+function renderInvariantList() {
+  const chat = currentChat();
+  const records = Array.isArray(chat?.invariants) ? chat.invariants : [];
+  document.querySelector('#invariantListCount').textContent = String(records.length);
+  invariantList.replaceChildren();
+  if (!records.length) {
+    const empty = document.createElement('p'); empty.className = 'invariant-list-empty';
+    empty.textContent = 'Инварианты пока не добавлены.'; invariantList.append(empty); return;
+  }
+  for (const invariant of records) {
+    const row = document.createElement('article'); row.className = 'invariant-item';
+    const scope = document.createElement('span'); scope.className = 'invariant-scope';
+    scope.textContent = invariantScopeLabels[invariant.scope] || invariant.scope;
+    const content = document.createElement('p'); content.textContent = invariant.content;
+    const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'remove-invariant';
+    remove.textContent = '×'; remove.title = 'Удалить инвариант'; remove.setAttribute('aria-label', `Удалить инвариант: ${invariant.content}`);
+    remove.addEventListener('click', async () => {
+      remove.disabled = true; invariantFormError.textContent = '';
+      try {
+        const response = await apiFetch(`/api/invariants/${invariant.id}`, { method: 'DELETE' });
+        const data = await response.json(); if (!response.ok) throw new Error(data.error || 'Не удалось удалить инвариант.');
+        for (const entity of [...chats, ...tasks]) entity.invariants = (entity.invariants || []).filter(item => item.id !== invariant.id);
+        if (invariant.scope === 'global') globalInvariants = globalInvariants.filter(item => item.id !== invariant.id);
+        saveChats(); renderInvariantList(); renderInvariantControl();
+      } catch (error) { invariantFormError.textContent = error.message; remove.disabled = false; }
+    });
+    row.append(scope, content, remove); invariantList.append(row);
+  }
+}
+function renderInvariantScopes() {
+  const taskMode = activeMode === 'task';
+  const scopes = taskMode
+    ? [['task', 'Память этой задачи'], ['stateMachine', 'State machine задачи'], ['global', 'Глобальная память']]
+    : [['conversation', 'Текущий чат'], ['global', 'Глобальная память']];
+  invariantScope.replaceChildren(...scopes.map(([value, label]) => {
+    const option = document.createElement('option'); option.value = value; option.textContent = label; return option;
+  }));
+}
+document.querySelector('#openInvariants').addEventListener('click', () => {
+  const chat = currentChat(); if (!chat) return;
+  invariantInput.value = '';
+  invariantFormError.textContent = '';
+  renderInvariantScopes(); renderInvariantList();
+  invariantModal.hidden = false;
+  invariantInput.focus();
+});
+document.querySelector('#closeInvariants').addEventListener('click', closeInvariantModal);
+document.querySelector('#cancelInvariants').addEventListener('click', closeInvariantModal);
+invariantModal.addEventListener('click', event => { if (event.target === invariantModal) closeInvariantModal(); });
+invariantForm.addEventListener('submit', async event => {
+  event.preventDefault();
+  const chat = currentChat(); if (!chat) return;
+  const content = invariantInput.value.trim(); if (!content) { invariantInput.focus(); return; }
+  const button = document.querySelector('#addInvariant');
+  button.disabled = true; invariantFormError.textContent = '';
+  try {
+    const response = await apiFetch('/api/invariants', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ conversationId: chat.id, scope: invariantScope.value, content })
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || 'Не удалось сохранить инварианты.');
+    chat.invariants = data.invariants;
+    syncGlobalInvariants(data.invariants);
+    invariantInput.value = ''; saveChats();
+    renderInvariantList(); renderInvariantControl(); invariantInput.focus();
+  } catch (error) { invariantFormError.textContent = error.message; }
+  finally { button.disabled = false; }
+});
 async function apiFetch(path, options) {
   try {
     return await fetch(path, options);
@@ -504,7 +622,7 @@ async function readStream(response, onToken, onStats = () => {}) {
       if (data === '[DONE]') return;
       const chunk = JSON.parse(data);
       if (chunk.error) throw new Error(chunk.error);
-      if (chunk.tokenStats) onStats(chunk.tokenStats, chunk.context);
+      if (chunk.tokenStats) onStats(chunk.tokenStats, chunk.context, chunk.messages);
       const token = chunk.choices?.[0]?.delta?.content;
       if (token) onToken(token);
     }
@@ -635,6 +753,7 @@ document.querySelector('#clearChat').addEventListener('click', async event => {
     chat.model = modelEl.value; chat.provider = selectedProvider();
     chat.title = 'Новый чат'; chat.history = []; chat.messages = [];
     chat.memory = { shortTerm: [], working: [], longTerm: structuredClone(longTermMemory) };
+    chat.invariants = structuredClone(globalInvariants);
     chat.tokenStats = null;
     chat.context = null;
     saveChats(); renderChat(); renderHistory();
@@ -735,10 +854,15 @@ async function sendConversationMessage(text, { taskAction = false, taskActionLab
         messagesEl.lastElementChild.querySelector('.bubble').textContent = answer;
         if (follow) messagesEl.scrollTop = messagesEl.scrollHeight;
       }
-    }, (stats, context) => { chat.tokenStats = stats; chat.context = context; });
+    }, (stats, context, messages) => {
+      chat.tokenStats = stats;
+      chat.context = context;
+      const savedAssistantMessage = [...(messages || [])].reverse().find(message => message.role === 'assistant');
+      assistantMessage.invariantRefusal = Boolean(savedAssistantMessage?.invariantRefusal);
+    });
     if (!answer) throw new Error('Сервис не вернул текст ответа.');
-    chat.history.push({ role: 'assistant', content: answer });
-    chat.memory.shortTerm.push({ role: 'assistant', content: answer });
+    chat.history.push({ role: 'assistant', content: answer, invariantRefusal: assistantMessage.invariantRefusal });
+    chat.memory.shortTerm.push({ role: 'assistant', content: answer, invariantRefusal: assistantMessage.invariantRefusal });
     if (settings.contextStrategy !== 'branching') {
       const recentDialogue = chat.history.filter(message => !message.memoryCommand).slice(-Number(settings.keepMessages));
       chat.history = chat.history.filter(message => message.memoryCommand || recentDialogue.includes(message));
@@ -752,6 +876,7 @@ async function sendConversationMessage(text, { taskAction = false, taskActionLab
       const bubble = messagesEl.lastElementChild.querySelector('.bubble');
       bubble.textContent = assistantMessage.content;
       bubble.classList.remove('typing');
+      setInvariantRefusalMark(messagesEl.lastElementChild, Boolean(assistantMessage.invariantRefusal));
       messagesEl.lastElementChild.classList.remove('task-action-running');
       if (follow) messagesEl.scrollTop = messagesEl.scrollHeight;
       renderChatTitle(chat);
@@ -774,6 +899,7 @@ document.querySelector('#clearAll').addEventListener('click', async () => {
     if (!response.ok) throw new Error((await response.json()).error);
     localStorage.removeItem(storageKey); sessionStorage.removeItem(storageKey);
     longTermMemory = [];
+    globalInvariants = [];
     chats = []; tasks = []; activeMode = 'chat'; activeTaskId = ''; activeChatId = createChat();
     comparisonResult.textContent = ''; comparisonModal.hidden = true;
     promptEl.value = ''; renderChat(); renderHistory(); renderTaskHistory();
@@ -788,6 +914,7 @@ async function initialize() {
     const [data, profilesData, tasksData] = await Promise.all([response.json(), profilesResponse.json(), tasksResponse.json()]);
     profiles = Array.isArray(profilesData.profiles) ? profilesData.profiles : [];
     longTermMemory = Array.isArray(data.longTerm) ? data.longTerm : [];
+    globalInvariants = Array.isArray(data.globalInvariants) ? data.globalInvariants : [];
     chats = data.chats.map(chat => ({
       id: chat.id, title: chat.messages.find(message => message.role === 'user' && !message.memoryCommand)?.content.slice(0, 42) || 'Новый чат',
       messages: chat.messages, history: [...chat.messages],
@@ -795,7 +922,8 @@ async function initialize() {
       maxTokens: chat.settings.maxTokens ?? '', tokenStats: chat.tokenStats, context: chat.context,
       keepMessages: chat.settings.keepMessages ?? 4, contextStrategy: chat.settings.contextStrategy ?? 'sliding',
       profileId: chat.settings.profileId || '',
-      memory: chat.memory || { shortTerm: [], working: [], longTerm: structuredClone(longTermMemory) }
+      memory: chat.memory || { shortTerm: [], working: [], longTerm: structuredClone(longTermMemory) },
+      invariants: Array.isArray(chat.invariants) ? chat.invariants : []
     }));
     tasks = (tasksData.tasks || []).map(task => ({
       ...task,
@@ -807,7 +935,8 @@ async function initialize() {
       keepMessages: task.conversation?.settings?.keepMessages ?? 100,
       contextStrategy: task.conversation?.settings?.contextStrategy ?? 'sliding',
       tokenStats: task.conversation?.tokenStats || null, context: task.conversation?.context || null,
-      memory: task.memory || { shortTerm: [], working: [], longTerm: [] }
+      memory: task.memory || { shortTerm: [], working: [], longTerm: [] },
+      invariants: Array.isArray(task.invariants) ? task.invariants : []
     }));
     const rememberedProfile = localStorage.getItem(profileStorageKey);
     selectedProfileId = profiles.some(profile => profile.id === rememberedProfile) ? rememberedProfile
@@ -877,7 +1006,7 @@ createTaskButton.addEventListener('click', async () => {
     const data = await response.json(); if (!response.ok) throw new Error(data.error || 'Не удалось создать задачу.');
     const task = data.task;
     const initialMessages = task.conversation?.messages || [{ role: 'user', content: description }];
-    tasks.unshift({ ...task, messages: initialMessages, history: [...initialMessages], model: modelEl.value, provider: selectedProvider(), lastTemperature: defaultTemperature, maxTokens: maxTokensEl.value, keepMessages: 100, contextStrategy: 'sliding', tokenStats: null, context: task.conversation?.context || null, memory: task.memory || { shortTerm: [{ role: 'user', content: description }], working: [], longTerm: [] } });
+    tasks.unshift({ ...task, messages: initialMessages, history: [...initialMessages], model: modelEl.value, provider: selectedProvider(), lastTemperature: defaultTemperature, maxTokens: maxTokensEl.value, keepMessages: 100, contextStrategy: 'sliding', tokenStats: null, context: task.conversation?.context || null, memory: task.memory || { shortTerm: [{ role: 'user', content: description }], working: [], longTerm: [] }, invariants: task.invariants || [] });
     activeMode = 'task'; activeTaskId = task.id; selectedProfileId = task.profileId || ''; sidePanel = 'primary';
     promptEl.value = ''; promptEl.style.height = 'auto';
     renderProfiles(); renderChat(); renderHistory(); renderTaskHistory(); promptEl.focus();
@@ -888,7 +1017,7 @@ createTaskButton.addEventListener('click', async () => {
 async function updateTaskState(event, payload = {}) {
   const task = currentTask(); if (!task) return null;
   const response = await apiFetch(`/api/tasks/${task.id}/state`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ event, ...payload })
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ event, userConsent: true, ...payload })
   });
   const data = await response.json(); if (!response.ok) throw new Error(data.error || 'Не удалось изменить состояние задачи.');
   const returnedMessages = Array.isArray(data.messages) ? data.messages : task.messages;
