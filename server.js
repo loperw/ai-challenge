@@ -2,7 +2,7 @@ const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
 const { Agent, AgentError, AgentRegistry, enforceStateTransitionInvariants } = require('./agent');
-const { createTask, transitionTask, TaskStateError } = require('./task-state');
+const { createTask, transitionTask, TaskStateError, allowedEvents, taskLifecycleInstructions } = require('./task-state');
 
 const publicDir = path.join(__dirname, 'public');
 const mimeTypes = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'application/javascript; charset=utf-8' };
@@ -82,12 +82,25 @@ async function handleChat(request, response) {
     }
 
     const task = body.ephemeral ? null : store.getTask(body.conversationId);
+    const taskEvent = typeof body.taskEvent === 'string' ? body.taskEvent : '';
+    if (task && task.stage === 'paused') {
+      throw new TaskStateError('Задача на паузе. Сначала нажмите «Продолжить».', 409, { code: 'TASK_PAUSED' });
+    }
+    if (task && body.taskAction) {
+      const assistantEvents = ['PLAN_READY', 'APPROVE_PLAN', 'STEP_DONE', 'VALIDATED', 'REVISE_PLAN'];
+      if (!assistantEvents.includes(taskEvent) || !allowedEvents(task).includes(taskEvent)) {
+        throw new TaskStateError(`Действие ${taskEvent || 'не указано'} недоступно в состоянии ${task.stage}.`, 409, {
+          code: 'INVALID_TASK_ACTION', state: task.stage, allowedEvents: allowedEvents(task)
+        });
+      }
+    }
     const taskContext = task ? [
       'РЕЖИМ ЗАДАЧИ. Это отдельная сущность со своей памятью и профилем.',
       `Название: ${task.name}`,
       `Описание результата: ${task.description}`,
       `Этап: ${task.stage}; текущий шаг: ${task.currentStep + 1}; ожидаемое действие: ${task.expectedAction}.`,
-      task.plan.length ? `Утверждённый или подготовленный план:\n${task.plan.map((step, index) => `${index + 1}. [${step.done ? 'готово' : 'не готово'}] ${step.title}`).join('\n')}` : ''
+      task.plan.length ? `Утверждённый или подготовленный план:\n${task.plan.map((step, index) => `${index + 1}. [${step.done ? 'готово' : 'не готово'}] ${step.title}`).join('\n')}` : '',
+      taskLifecycleInstructions(task, { taskAction: Boolean(body.taskAction), event: taskEvent })
     ].filter(Boolean).join('\n') : '';
     const settings = {
       provider: body.provider,
@@ -122,7 +135,7 @@ async function handleChat(request, response) {
     response.end('data: [DONE]\n\n');
   } catch (error) {
     const message = error.message || 'Не удалось выполнить запрос.';
-    const status = error instanceof AgentError ? error.status : 500;
+    const status = error.status || 500;
     if (!response.headersSent) return sendJson(response, status, { error: message });
     response.write(`data: ${JSON.stringify({ error: message })}\n\n`);
     response.end('data: [DONE]\n\n');
@@ -182,6 +195,11 @@ const server = http.createServer(async (request, response) => {
       if (!current) throw new TaskStateError('Задача не найдена.', 404);
       const body = await readBody(request);
       if (body.event === 'SET_PROFILE' && body.profileId && !store.getProfile(body.profileId)) throw new TaskStateError('Выбранный профиль не найден.', 400);
+      if (body.event !== 'SET_PROFILE' && (!Number.isInteger(body.expectedVersion) || body.expectedVersion < 0)) {
+        throw new TaskStateError('Для перехода нужна актуальная версия состояния задачи.', 400, {
+          code: 'TASK_VERSION_REQUIRED', state: current.stage, version: current.version
+        });
+      }
       const nextTask = transitionTask(current, body.event, body);
       const stateInvariants = body.event === 'SET_PROFILE' ? [] : store.getStateMachineInvariants(current.id);
       if (stateInvariants.length) {
@@ -192,6 +210,12 @@ const server = http.createServer(async (request, response) => {
           current, next: nextTask, event: body.event, userConsent: body.userConsent
         });
       }
+      const latest = store.getTask(current.id);
+      if (body.event !== 'SET_PROFILE' && latest.version !== current.version) {
+        throw new TaskStateError('Состояние задачи уже изменилось. Обновите задачу и повторите действие.', 409, {
+          code: 'STALE_TASK_STATE', state: latest.stage, version: latest.version, allowedEvents: latest.allowedEvents
+        });
+      }
       const task = store.saveTask(nextTask);
       const actionLabel = { PAUSE: 'Пауза', RESUME: 'Продолжить' }[body.event];
       if (actionLabel) {
@@ -200,7 +224,13 @@ const server = http.createServer(async (request, response) => {
       }
       return sendJson(response, 200, { task, messages: store.chats[task.id]?.messages || [], memory: store.view(task.id) });
     } catch (error) {
-      return sendJson(response, error.status || 500, { error: error.message || 'Не удалось изменить состояние задачи.' });
+      return sendJson(response, error.status || 500, {
+        error: error.message || 'Не удалось изменить состояние задачи.',
+        ...(error.code && { code: error.code }),
+        ...(error.state && { state: error.state }),
+        ...(error.allowedEvents && { allowedEvents: error.allowedEvents }),
+        ...(error.version !== undefined && { version: error.version })
+      });
     }
   }
   const taskRoute = request.url.match(/^\/api\/tasks\/([a-f0-9-]+)$/i);

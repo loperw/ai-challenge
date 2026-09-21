@@ -299,7 +299,7 @@ function renderInvariantControl() {
     : 'Задать непреложные ограничения';
 }
 function stageLabel(stage) {
-  return { planning: 'Планирование', execution: 'Выполнение', validation: 'Проверка', done: 'Готово' }[stage] || stage;
+  return { planning: 'Планирование', awaiting_approval: 'Утверждение плана', execution: 'Выполнение', validation: 'Проверка', paused: 'Пауза', done: 'Готово' }[stage] || stage;
 }
 function renderWorkspaceMode() {
   const task = currentTask();
@@ -327,14 +327,15 @@ function renderWorkspaceMode() {
 function renderProcess() {
   const task = currentTask(); if (!task) return;
   const stages = [
-    ['planning', 'Планирование', '◇'], ['execution', 'Выполнение', '▶'],
+    ['planning', 'Планирование', '◇'], ['awaiting_approval', 'Утверждение', '○'], ['execution', 'Выполнение', '▶'],
     ['validation', 'Проверка', '◎'], ['done', 'Готово', '✓']
   ];
-  const activeIndex = stages.findIndex(([id]) => id === task.stage);
+  const visibleStage = task.stage === 'paused' ? task.resumeStage : task.stage;
+  const activeIndex = stages.findIndex(([id]) => id === visibleStage);
   const track = document.createElement('div'); track.className = 'task-stage-track';
   stages.forEach(([id, label, icon], index) => {
     const item = document.createElement('div');
-    item.className = `task-stage${index < activeIndex || task.stage === 'done' ? ' complete' : ''}${index === activeIndex ? ' active' : ''}${index === activeIndex && task.paused ? ' paused' : ''}`;
+    item.className = `task-stage${index < activeIndex || visibleStage === 'done' ? ' complete' : ''}${index === activeIndex ? ' active' : ''}${index === activeIndex && task.paused ? ' paused' : ''}`;
     const mark = document.createElement('span'); mark.className = 'task-stage-icon'; mark.textContent = index < activeIndex || task.stage === 'done' ? '✓' : task.paused && index === activeIndex ? '||' : icon;
     const text = document.createElement('span'); text.textContent = label; item.append(mark, text); track.append(item);
   });
@@ -347,7 +348,7 @@ function renderProcess() {
   document.querySelector('#processExpected').textContent = task.expectedAction;
   const activity = document.querySelector('#processActivity'); activity.textContent = task.busyAction ? `Выполняется… ${task.busyLabel || task.expectedAction}` : task.activity;
   activity.classList.toggle('running', Boolean(task.busyAction));
-  const icon = document.querySelector('#processStatusIcon'); icon.textContent = task.paused ? '||' : task.busyAction ? '▶' : task.stage === 'done' ? '✓' : stages[activeIndex]?.[2] || '◇';
+  const icon = document.querySelector('#processStatusIcon'); icon.textContent = task.paused ? '||' : task.busyAction ? '▶' : visibleStage === 'done' ? '✓' : stages[activeIndex]?.[2] || '◇';
   icon.className = `settings-icon process-icon${task.busyAction ? ' running' : ''}${task.paused ? ' paused' : ''}`;
   const list = document.querySelector('#planList'); list.replaceChildren();
   if (!task.plan.length) {
@@ -769,7 +770,7 @@ form.addEventListener('submit', async event => {
   event.preventDefault(); const text = promptEl.value.trim(); if (!text) return;
   await sendConversationMessage(text);
 });
-async function sendConversationMessage(text, { taskAction = false, taskActionLabel = '' } = {}) {
+async function sendConversationMessage(text, { taskAction = false, taskActionLabel = '', taskEvent = '' } = {}) {
   if (sendButton.disabled) return '';
   const settings = {
     jsonMode: jsonModeEl.checked,
@@ -843,6 +844,7 @@ async function sendConversationMessage(text, { taskAction = false, taskActionLab
       message: text,
       taskAction,
       taskActionLabel,
+      taskEvent,
       ...settings
     }) });
     if (!response.ok) { const data = await response.json(); throw new Error(data.error || 'Ошибка соединения'); }
@@ -1017,7 +1019,7 @@ createTaskButton.addEventListener('click', async () => {
 async function updateTaskState(event, payload = {}) {
   const task = currentTask(); if (!task) return null;
   const response = await apiFetch(`/api/tasks/${task.id}/state`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ event, userConsent: true, ...payload })
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ event, userConsent: true, expectedVersion: task.version, ...payload })
   });
   const data = await response.json(); if (!response.ok) throw new Error(data.error || 'Не удалось изменить состояние задачи.');
   const returnedMessages = Array.isArray(data.messages) ? data.messages : task.messages;
@@ -1037,10 +1039,10 @@ async function runTaskAction({ revision = '' } = {}) {
   if (revision) {
     event = 'REVISE_PLAN';
     prompt = `Пересмотри способ выполнения задачи «${task.name}». Причина изменений: ${revision}. Сейчас не решай задачу и не давай итоговый ответ. Сначала кратко объясни, что будет происходить во время выполнения и как эти действия приведут к результату. Затем добавь заголовок «План» и только действительно необходимые короткие нумерованные шаги. Обычно достаточно 1–2 шагов; добавляй третий или четвёртый только если без них нельзя получить качественный результат. Не дроби одно действие на несколько формальных пунктов.\nТекущий план:\n${task.plan.map((step, index) => `${index + 1}. ${step.title}`).join('\n')}`;
-  } else if (task.stage === 'planning' && !task.plan.length) {
+  } else if (task.stage === 'planning') {
     event = 'PLAN_READY';
     prompt = `Подготовь способ выполнения пользовательской задачи. На этом этапе не отвечай на сам вопрос, не решай задачу и не сообщай итоговые выводы. Сначала кратко и понятно объясни пользователю, что будет происходить во время выполнения задачи и как будет получен результат. Затем добавь заголовок «План» и только действительно необходимые короткие нумерованные шаги. Обычно достаточно 1–2 шагов; добавляй третий или четвёртый только если без них нельзя получить качественный результат. Не дроби одно действие на несколько формальных пунктов.`;
-  } else if (task.stage === 'planning') {
+  } else if (task.stage === 'awaiting_approval') {
     event = 'APPROVE_PLAN';
     prompt = `План задачи «${task.name}» утверждён. Кратко сообщи, с какого первого шага начинаем и какой результат он должен дать. Не повторяй весь план.`;
   } else if (task.stage === 'execution') {
@@ -1055,7 +1057,7 @@ async function runTaskAction({ revision = '' } = {}) {
   renderProcess(); renderTaskHistory();
   try {
     const actionLabel = revision ? 'Пересмотреть план' : task.expectedAction;
-    const answer = await sendConversationMessage(prompt, { taskAction: true, taskActionLabel: actionLabel });
+    const answer = await sendConversationMessage(prompt, { taskAction: true, taskActionLabel: actionLabel, taskEvent: event });
     if (!answer) return;
     const plan = ['PLAN_READY', 'REVISE_PLAN'].includes(event) ? parsePlan(answer) : undefined;
     if (plan && !plan.length) throw new Error('Агент не вернул распознаваемые шаги плана. Попробуйте ещё раз.');

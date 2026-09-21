@@ -112,7 +112,7 @@ html, body { height:100%; overflow:hidden; }
 .history-chat.task-entry.paused::before { content:'||'; color:#c58a23; font-family:Arial,sans-serif; font-size:10px; font-weight:800; letter-spacing:-1px; }
 .topbar #entityKind { margin-bottom:6px; color:#9990df; }
 .task-stage-bar { flex:none; padding:17px 42px 12px; border-bottom:1px solid var(--line); background:#fcfcfe; }
-.task-stage-track { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); }
+.task-stage-track { display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); }
 .task-stage { position:relative; display:flex; flex-direction:column; align-items:center; gap:5px; color:#9ba1ac; font-size:9px; font-weight:700; text-align:center; }
 .task-stage:not(:last-child)::after { content:''; position:absolute; z-index:0; top:10px; left:calc(50% + 12px); width:calc(100% - 24px); height:2px; background:#e1e3e8; }
 .task-stage.complete:not(:last-child)::after { background:#35a57d; }

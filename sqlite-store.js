@@ -2,6 +2,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const { DatabaseSync } = require('node:sqlite');
+const { normalizeTask } = require('./task-state');
 
 function parseJson(value, fallback) {
   if (value == null) return fallback;
@@ -319,7 +320,8 @@ class SQLiteStore {
 
   taskFromRow(row) {
     if (!row) return null;
-    return parseJson(row.state_json, null);
+    const task = parseJson(row.state_json, null);
+    return task ? normalizeTask(task) : null;
   }
 
   listTasks() {
