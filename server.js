@@ -75,13 +75,14 @@ function invariantFields(body) {
 }
 
 async function handleChat(request, response) {
+  let task = null;
   try {
     const body = await readBody(request);
     if (!body.ephemeral && !validConversationId(body.conversationId)) {
       return sendJson(response, 400, { error: 'Некорректный идентификатор диалога.' });
     }
 
-    const task = body.ephemeral ? null : store.getTask(body.conversationId);
+    task = body.ephemeral ? null : store.getTask(body.conversationId);
     const taskEvent = typeof body.taskEvent === 'string' ? body.taskEvent : '';
     if (task && task.stage === 'paused') {
       throw new TaskStateError('Задача на паузе. Сначала нажмите «Продолжить».', 409, { code: 'TASK_PAUSED' });
@@ -136,7 +137,11 @@ async function handleChat(request, response) {
   } catch (error) {
     const message = error.message || 'Не удалось выполнить запрос.';
     const status = error.status || 500;
-    if (!response.headersSent) return sendJson(response, status, { error: message });
+    if (!response.headersSent) return sendJson(response, status, {
+      error: message,
+      ...(error.code && { code: error.code }),
+      ...(task && { task: store.getTask(task.id) })
+    });
     response.write(`data: ${JSON.stringify({ error: message })}\n\n`);
     response.end('data: [DONE]\n\n');
   }
@@ -195,6 +200,11 @@ const server = http.createServer(async (request, response) => {
       if (!current) throw new TaskStateError('Задача не найдена.', 404);
       const body = await readBody(request);
       if (body.event === 'SET_PROFILE' && body.profileId && !store.getProfile(body.profileId)) throw new TaskStateError('Выбранный профиль не найден.', 400);
+      if (body.event !== 'SET_PROFILE' && agents.agents.get(current.id)?.busy) {
+        throw new TaskStateError('Дождитесь завершения текущего ответа. Состояние задачи не изменено.', 409, {
+          code: 'TASK_BUSY', state: current.stage, version: current.version
+        });
+      }
       if (body.event !== 'SET_PROFILE' && (!Number.isInteger(body.expectedVersion) || body.expectedVersion < 0)) {
         throw new TaskStateError('Для перехода нужна актуальная версия состояния задачи.', 400, {
           code: 'TASK_VERSION_REQUIRED', state: current.stage, version: current.version
@@ -224,12 +234,14 @@ const server = http.createServer(async (request, response) => {
       }
       return sendJson(response, 200, { task, messages: store.chats[task.id]?.messages || [], memory: store.view(task.id) });
     } catch (error) {
+      const authoritativeTask = store.getTask(taskStateRoute[1]);
       return sendJson(response, error.status || 500, {
         error: error.message || 'Не удалось изменить состояние задачи.',
         ...(error.code && { code: error.code }),
         ...(error.state && { state: error.state }),
         ...(error.allowedEvents && { allowedEvents: error.allowedEvents }),
-        ...(error.version !== undefined && { version: error.version })
+        ...(error.version !== undefined && { version: error.version }),
+        ...(authoritativeTask && { task: authoritativeTask })
       });
     }
   }

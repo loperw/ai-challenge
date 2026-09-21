@@ -326,6 +326,7 @@ function renderWorkspaceMode() {
 }
 function renderProcess() {
   const task = currentTask(); if (!task) return;
+  const hasPendingResponse = task.messages.some(message => message.pending);
   const stages = [
     ['planning', 'Планирование', '◇'], ['awaiting_approval', 'Утверждение', '○'], ['execution', 'Выполнение', '▶'],
     ['validation', 'Проверка', '◎'], ['done', 'Готово', '✓']
@@ -359,10 +360,10 @@ function renderProcess() {
   });
   document.querySelector('#planProgress').textContent = `${task.plan.filter(step => step.done).length} / ${task.plan.length}`;
   taskPrimaryAction.textContent = task.expectedAction;
-  taskPrimaryAction.disabled = task.paused || task.stage === 'done' || Boolean(task.busyAction);
+  taskPrimaryAction.disabled = task.paused || task.stage === 'done' || Boolean(task.busyAction) || hasPendingResponse;
   taskPauseButton.textContent = task.paused ? 'Продолжить' : task.pauseRequested ? 'Пауза запрошена' : 'Пауза';
-  taskPauseButton.disabled = task.stage === 'done' || Boolean(task.pauseRequested);
-  revisePlanButton.disabled = task.paused || task.stage === 'done' || !task.plan.length || Boolean(task.busyAction);
+  taskPauseButton.disabled = task.stage === 'done' || Boolean(task.pauseRequested) || (hasPendingResponse && !task.busyAction);
+  revisePlanButton.disabled = task.paused || task.stage === 'done' || !task.plan.length || Boolean(task.busyAction) || hasPendingResponse;
 }
 function chatTranscript(chat) {
   const settings = chatSettings(chat);
@@ -724,7 +725,11 @@ compareChatsButton.addEventListener('click', async () => {
       temperature: defaultTemperature,
 
     }) });
-    if (!response.ok) { const data = await response.json(); throw new Error(data.error || 'Ошибка соединения'); }
+    if (!response.ok) {
+      const data = await response.json();
+      if (data.task && activeMode === 'task' && data.task.id === chat.id) Object.assign(chat, data.task);
+      throw new Error(data.error || 'Ошибка соединения');
+    }
     await readStream(response, token => { result += token; comparisonResult.textContent = result; });
     if (!result) throw new Error('Сервис не вернул текст сравнения.');
   } catch (error) { comparisonResult.textContent = `Не удалось выполнить сравнение: ${error.message}`; }
@@ -1021,7 +1026,11 @@ async function updateTaskState(event, payload = {}) {
   const response = await apiFetch(`/api/tasks/${task.id}/state`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ event, userConsent: true, expectedVersion: task.version, ...payload })
   });
-  const data = await response.json(); if (!response.ok) throw new Error(data.error || 'Не удалось изменить состояние задачи.');
+  const data = await response.json();
+  if (!response.ok) {
+    if (data.task?.id === task.id) Object.assign(task, data.task);
+    throw new Error(data.error || 'Не удалось изменить состояние задачи.');
+  }
   const returnedMessages = Array.isArray(data.messages) ? data.messages : task.messages;
   const runtime = { messages: returnedMessages, history: [...returnedMessages], memory: data.memory || task.memory, model: task.model, provider: task.provider, lastTemperature: task.lastTemperature, maxTokens: task.maxTokens, keepMessages: task.keepMessages, contextStrategy: task.contextStrategy, tokenStats: task.tokenStats, context: task.context };
   Object.assign(task, data.task, runtime);
