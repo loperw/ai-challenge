@@ -7,6 +7,12 @@
   },
   "scripts": {
     "start": "node server.js",
+    "mcp:list": "node mcp/client.mjs",
     "test": "node --test"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/client": "^2.1.0",
+    "@modelcontextprotocol/server": "^2.1.0",
+    "zod": "^4.6.5"
   }
 }
