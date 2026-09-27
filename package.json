@@ -8,6 +8,7 @@
   "scripts": {
     "start": "node server.js",
     "mcp:list": "node mcp/client.mjs",
+    "eval:pipeline": "node scripts/eval-pipeline.mjs",
     "test": "node --test"
   },
   "dependencies": {

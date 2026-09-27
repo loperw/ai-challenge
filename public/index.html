@@ -157,9 +157,9 @@
       </section>
       <section id="mcpTab" class="side-tab-panel mcp-panel" role="tabpanel" aria-labelledby="mcpTabButton" hidden>
         <div class="settings-title"><span class="settings-icon mcp-icon">M</span><div><p class="eyebrow">MODEL CONTEXT PROTOCOL</p><h2>Трассировка MCP</h2></div></div>
-        <p class="mcp-intro">Агент сам вызывает <code>get_weather</code> для запросов о погоде. Пример: <button id="mcpExample" type="button">«Какая погода в Москве на 3 дня?»</button></p>
+        <p class="mcp-intro">Модель выбирает инструменты по запросу и результатам предыдущих вызовов. Поиск работает по локальной базе знаний. Пример: <button id="mcpExample" type="button">«Найди сведения о MCP, сделай выжимку и сохрани в mcp-summary.md»</button></p>
         <div id="mcpTrace" class="mcp-trace" aria-live="polite">
-          <div class="mcp-empty"><strong>Вызовов пока нет</strong><span>Отправьте погодный запрос в Agent chat. Здесь появятся этапы, схемы, аргументы и ответ tool.</span></div>
+          <div class="mcp-empty"><strong>Вызовов пока нет</strong><span>Отправьте запрос в Agent chat. Здесь появятся решения модели, аргументы и результаты всех вызовов.</span></div>
         </div>
       </section>
     </aside>
@@ -226,7 +226,22 @@
       <div class="profile-form-actions"><button id="cancelRevise" class="ghost-button" type="button">Отмена</button><button id="submitRevise" class="primary-button" type="submit">Пересмотреть план</button></div>
     </form>
   </div>
+  <dialog id="filePreviewModal" class="file-preview-modal" aria-labelledby="filePreviewTitle">
+    <header class="file-preview-header">
+      <div><p class="eyebrow">ПРЕДПРОСМОТР ФАЙЛА</p><h2 id="filePreviewTitle"></h2></div>
+      <button id="closeFilePreview" class="modal-close" type="button" aria-label="Закрыть предпросмотр">×</button>
+    </header>
+    <div class="file-preview-toolbar" role="group" aria-label="Вид предпросмотра">
+      <button id="filePreviewDocumentButton" type="button" aria-pressed="true">Документ</button>
+      <button id="filePreviewSourceButton" type="button" aria-pressed="false">Исходный текст</button>
+    </div>
+    <p id="filePreviewStatus" class="file-preview-status" role="status"></p>
+    <div id="filePreviewContent" class="file-preview-content" tabindex="0" hidden></div>
+    <pre id="filePreviewSource" class="file-preview-source" tabindex="0" hidden></pre>
+    <footer class="file-preview-footer"><span id="filePreviewMeta"></span><a id="filePreviewDownload" class="file-action file-download" download>Скачать файл</a></footer>
+  </dialog>
   <script src="token-counter.js"></script>
+  <script src="file-preview.js"></script>
   <script src="app.js"></script>
   <script src="monitor.js"></script>
 </body>

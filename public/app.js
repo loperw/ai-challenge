@@ -283,7 +283,7 @@ function renderChat() {
   renderWorkspaceMode();
   renderMcpTrace();
   messagesEl.innerHTML = '';
-  visibleMessages(chat).forEach(message => addMessage(message.role, message.content, message.pending, message.memoryCommand, message.memoryType, message.invariantRefusal));
+  visibleMessages(chat).forEach(message => addMessage(message.role, message.content, message.pending, message.memoryCommand, message.memoryType, message.invariantRefusal, message.files));
   if (!visibleMessages(chat).length) {
     const empty = document.createElement('div'); empty.className = 'empty-chat'; empty.textContent = 'Чем помочь?'; messagesEl.append(empty);
   }
@@ -434,7 +434,7 @@ function setInvariantRefusalMark(item, enabled) {
   body.insertBefore(badge, body.querySelector('.bubble'));
 }
 
-function addMessage(role, content, pending = false, memoryCommand = false, memoryType = '', invariantRefusal = false) {
+function addMessage(role, content, pending = false, memoryCommand = false, memoryType = '', invariantRefusal = false, files = []) {
   const item = document.createElement('article'); item.className = `message ${role}${memoryCommand ? ' memory-command' : ''}`;
   const avatar = document.createElement('div'); avatar.className = 'avatar'; avatar.textContent = role === 'assistant' ? 'A' : 'Я';
   const bubble = document.createElement('div'); bubble.className = `bubble${pending ? ' typing' : ''}`; bubble.textContent = content;
@@ -446,10 +446,93 @@ function addMessage(role, content, pending = false, memoryCommand = false, memor
     const body = document.createElement('div'); body.className = 'message-body';
     const author = document.createElement('span'); author.className = 'message-author'; author.textContent = 'Агент';
     body.append(author, bubble); item.append(avatar, body);
+    renderFileCards(item, files);
     setInvariantRefusalMark(item, Boolean(invariantRefusal));
   } else item.append(avatar, bubble);
   messagesEl.append(item); return item;
 }
+
+const filePreviewModal = document.querySelector('#filePreviewModal');
+let previewRequest;
+let previewTrigger;
+let previewReady = false;
+let previewMode = 'document';
+
+function setPreviewMode(mode) {
+  previewMode = mode;
+  document.querySelector('#filePreviewDocumentButton').setAttribute('aria-pressed', String(mode === 'document'));
+  document.querySelector('#filePreviewSourceButton').setAttribute('aria-pressed', String(mode === 'source'));
+  document.querySelector('#filePreviewContent').hidden = !previewReady || mode !== 'document';
+  document.querySelector('#filePreviewSource').hidden = !previewReady || mode !== 'source';
+}
+document.querySelector('#filePreviewDocumentButton').addEventListener('click', () => setPreviewMode('document'));
+document.querySelector('#filePreviewSourceButton').addEventListener('click', () => setPreviewMode('source'));
+
+function fileLinks(file) {
+  // Derive same-origin routes from the name; never trust stored link schemes.
+  const url = `/api/files/${encodeURIComponent(file.name)}`;
+  return { preview: url, download: `${url}?download=1` };
+}
+function renderFileCards(message, files = []) {
+  const body = message.querySelector('.message-body');
+  if (!body) return;
+  body.querySelector('.message-files')?.remove();
+  if (!files.length) return;
+  const list = document.createElement('div'); list.className = 'message-files';
+  for (const file of files) {
+    if (!file || typeof file.name !== 'string') continue;
+    const card = document.createElement('section'); card.className = 'file-card'; card.setAttribute('aria-label', `Файл ${file.name}`);
+    const icon = document.createElement('span'); icon.className = 'file-type-icon'; icon.textContent = file.name.split('.').at(-1).toUpperCase(); icon.setAttribute('aria-hidden', 'true');
+    const info = document.createElement('div'); info.className = 'file-info';
+    const name = document.createElement('strong'); name.textContent = file.name;
+    const meta = document.createElement('span'); meta.textContent = Number.isFinite(file.bytes)
+      ? file.bytes < 1024 ? `${file.bytes} Б` : `${(file.bytes / 1024).toLocaleString('ru-RU', { maximumFractionDigits: 1 })} КБ`
+      : 'Текстовый файл';
+    info.append(name, meta);
+    const actions = document.createElement('div'); actions.className = 'file-actions';
+    const preview = document.createElement('button'); preview.type = 'button'; preview.className = 'file-action'; preview.textContent = 'Предпросмотр';
+    preview.addEventListener('click', () => openFilePreview(file, preview));
+    const download = document.createElement('a'); download.className = 'file-action file-download'; download.textContent = 'Скачать';
+    download.href = fileLinks(file).download; download.download = file.name;
+    actions.append(preview, download); card.append(icon, info, actions); list.append(card);
+  }
+  body.append(list);
+}
+async function openFilePreview(file, trigger) {
+  previewRequest?.abort();
+  const controller = new AbortController(); previewRequest = controller; previewTrigger = trigger;
+  const status = document.querySelector('#filePreviewStatus');
+  const content = document.querySelector('#filePreviewContent');
+  const source = document.querySelector('#filePreviewSource');
+  previewReady = false; setPreviewMode('document');
+  source.textContent = '';
+  document.querySelector('#filePreviewMeta').textContent = `${file.name.split('.').at(-1).toUpperCase()} · UTF-8`;
+  document.querySelector('#filePreviewTitle').textContent = file.name;
+  const download = document.querySelector('#filePreviewDownload');
+  download.href = fileLinks(file).download; download.download = file.name;
+  status.textContent = 'Загрузка…'; status.hidden = false;
+  content.textContent = ''; content.hidden = true;
+  if (!filePreviewModal.open) filePreviewModal.showModal();
+  document.querySelector('#closeFilePreview').focus();
+  try {
+    const response = await apiFetch(fileLinks(file).preview, { signal: controller.signal });
+    if (!response.ok) throw new Error('Файл недоступен или был удалён.');
+    const text = await response.text();
+    if (controller.signal.aborted) return;
+    FilePreview.render(content, text);
+    source.textContent = text;
+    previewReady = true; setPreviewMode(previewMode); status.hidden = true;
+  } catch (error) {
+    if (!controller.signal.aborted) status.textContent = error.message;
+  }
+}
+document.querySelector('#closeFilePreview').addEventListener('click', () => filePreviewModal.close());
+filePreviewModal.addEventListener('close', () => { previewRequest?.abort(); previewTrigger?.focus(); });
+filePreviewModal.addEventListener('click', event => {
+  if (event.target !== filePreviewModal) return;
+  const rect = filePreviewModal.getBoundingClientRect();
+  if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) filePreviewModal.close();
+});
 
 function renderMemoryItems(element, items, label) {
   element.replaceChildren();
@@ -523,7 +606,7 @@ document.querySelector('#settingsTabButton').addEventListener('click', () => { s
 document.querySelector('#memoryTabButton').addEventListener('click', () => { sidePanel = 'memory'; renderWorkspaceMode(); renderMemory(); });
 document.querySelector('#mcpTabButton').addEventListener('click', () => { sidePanel = 'mcp'; renderWorkspaceMode(); renderMcpTrace(); });
 document.querySelector('#mcpExample').addEventListener('click', () => {
-  promptEl.value = 'Какая погода в Москве на 3 дня?';
+  promptEl.value = 'Найди сведения о MCP, сделай выжимку и сохрани в mcp-summary.md';
   promptEl.dispatchEvent(new Event('input')); promptEl.focus();
 });
 
@@ -536,14 +619,16 @@ function renderMcpTrace() {
   const root = document.querySelector('#mcpTrace');
   const trace = currentChat()?.mcpTrace;
   if (!trace) {
-    root.innerHTML = '<div class="mcp-empty"><strong>Вызовов пока нет</strong><span>Отправьте погодный запрос в Agent chat. Здесь появятся этапы, схемы, аргументы и ответ tool.</span></div>';
+    root.innerHTML = '<div class="mcp-empty"><strong>Вызовов пока нет</strong><span>Отправьте запрос в Agent chat. Здесь появятся решения модели, аргументы и результаты всех вызовов.</span></div>';
     return;
   }
   root.replaceChildren();
   const header = document.createElement('div'); header.className = 'mcp-run-header';
   const identity = document.createElement('div');
   const label = document.createElement('span'); label.textContent = trace.server ? `${trace.server.name} · v${trace.server.version}` : 'MCP stdio · подключение';
-  const tool = document.createElement('strong'); tool.textContent = trace.tool?.name || 'Выбор tool…';
+  const tool = document.createElement('strong'); tool.textContent = trace.calls?.length
+    ? trace.calls.map(call => call.name).join(' → ')
+    : trace.status === 'done' ? 'Ответ без инструментов' : trace.tool?.name || 'Выбор инструмента…';
   identity.append(label, tool);
   const status = document.createElement('span'); status.className = `mcp-status ${trace.status}`;
   status.textContent = trace.status === 'done' ? 'Готово' : trace.status === 'error' ? 'Ошибка' : 'Вызов…';
@@ -664,7 +749,7 @@ async function apiFetch(path, options) {
     throw error;
   }
 }
-async function readStream(response, onToken, onStats = () => {}, onMcpTrace = () => {}) {
+async function readStream(response, onToken, onStats = () => {}, onMcpTrace = () => {}, onFile = () => {}) {
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
@@ -681,6 +766,7 @@ async function readStream(response, onToken, onStats = () => {}, onMcpTrace = ()
       const chunk = JSON.parse(data);
       if (chunk.error) throw new Error(chunk.error);
       if (chunk.mcpTrace) onMcpTrace(chunk.mcpTrace);
+      if (chunk.fileCreated) onFile(chunk.fileCreated);
       if (chunk.scheduleCreated) { sidePanel = 'monitor'; renderWorkspaceMode(); refreshMonitoring(); }
       if (chunk.tokenStats) onStats(chunk.tokenStats, chunk.context, chunk.messages);
       const token = chunk.choices?.[0]?.delta?.content;
@@ -926,14 +1012,18 @@ async function sendConversationMessage(text, { taskAction = false, taskActionLab
       chat.context = context;
       const savedAssistantMessage = [...(messages || [])].reverse().find(message => message.role === 'assistant');
       assistantMessage.invariantRefusal = Boolean(savedAssistantMessage?.invariantRefusal);
+      assistantMessage.files = savedAssistantMessage?.files || assistantMessage.files || [];
     }, trace => {
       chat.mcpTrace = trace;
       if (isActive()) { sidePanel = 'mcp'; renderWorkspaceMode(); renderMcpTrace(); }
       saveChats();
+    }, file => {
+      assistantMessage.files ||= [];
+      if (!assistantMessage.files.some(item => item.name === file.name)) assistantMessage.files.push(file);
     });
     if (!answer) throw new Error('Сервис не вернул текст ответа.');
-    chat.history.push({ role: 'assistant', content: answer, invariantRefusal: assistantMessage.invariantRefusal });
-    chat.memory.shortTerm.push({ role: 'assistant', content: answer, invariantRefusal: assistantMessage.invariantRefusal });
+    chat.history.push({ role: 'assistant', content: answer, invariantRefusal: assistantMessage.invariantRefusal, files: assistantMessage.files });
+    chat.memory.shortTerm.push({ role: 'assistant', content: answer, invariantRefusal: assistantMessage.invariantRefusal, files: assistantMessage.files });
     if (settings.contextStrategy !== 'branching') {
       const recentDialogue = chat.history.filter(message => !message.memoryCommand).slice(-Number(settings.keepMessages));
       chat.history = chat.history.filter(message => message.memoryCommand || recentDialogue.includes(message));
@@ -947,6 +1037,7 @@ async function sendConversationMessage(text, { taskAction = false, taskActionLab
       const bubble = messagesEl.lastElementChild.querySelector('.bubble');
       bubble.textContent = assistantMessage.content;
       bubble.classList.remove('typing');
+      renderFileCards(messagesEl.lastElementChild, assistantMessage.files);
       setInvariantRefusalMark(messagesEl.lastElementChild, Boolean(assistantMessage.invariantRefusal));
       messagesEl.lastElementChild.classList.remove('task-action-running');
       if (follow) messagesEl.scrollTop = messagesEl.scrollHeight;

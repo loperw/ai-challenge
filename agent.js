@@ -99,9 +99,10 @@ function validatedSettings(settings) {
 }
 
 class Agent {
-  constructor(settings, { fetchImpl = globalThis.fetch, messages = [], tokenStats = null, context = {}, persist = () => {}, getMemory = () => ({ working: [], longTerm: [] }), getProfile = () => null, getInvariants = () => [], evaluateInvariantRequest = null, repairInvariantResponse = null, recordShortTerm = () => {} } = {}) {
+  constructor(settings, { fetchImpl = globalThis.fetch, messages = [], tokenStats = null, context = {}, persist = () => {}, getMemory = () => ({ working: [], longTerm: [] }), getProfile = () => null, getInvariants = () => [], evaluateInvariantRequest = null, repairInvariantResponse = null, recordShortTerm = () => {}, openToolSession = null } = {}) {
     if (typeof fetchImpl !== 'function') throw new Error('Для агента необходим fetch.');
     this.fetch = fetchImpl;
+    this.openToolSession = openToolSession;
     this.messages = messages.map(message => ({ ...message }));
     this.persist = persist;
     this.getMemory = getMemory;
@@ -236,9 +237,13 @@ ${invariants.map((item, index) => `${index + 1}. ${item}`).join('\n')}
     return content.replace(/^\s*(?:#{1,6}\s*)?(?:\*{1,2})?ПРОВЕРКА ИНВАРИАНТОВ(?:\*{1,2})?:?\s*$/gmi, '').trimStart();
   }
 
-  responseTokenLimit() {
+  responseTokenLimit(options = {}) {
     if (this.settings.maxTokens === undefined) return undefined;
-    const remaining = this.settings.maxTokens - estimateHistory(this.contextMessages()) - estimateTokens(this.systemPrompt());
+    const inputTokens = options.messages
+      ? estimateTokens(JSON.stringify(this.settings.provider === 'gemini' ? options.geminiContents : options.messages))
+        + estimateTokens(JSON.stringify(options.tools || [])) + estimateTokens(options.toolPrompt || '')
+      : estimateHistory(this.contextMessages());
+    const remaining = this.settings.maxTokens - inputTokens - estimateTokens(this.systemPrompt());
     if (remaining < 1) {
       throw new AgentError('Лимит токенов диалога исчерпан историей и текущим запросом. Увеличьте лимит или очистите диалог.', 400);
     }
@@ -362,7 +367,7 @@ ${invariants.map((item, index) => `${index + 1}. ${item}`).join('\n')}
     } catch (error) { Object.assign(this, previous); throw error; }
   }
 
-  async respond(userRequest, { onStart = () => {}, onToken = () => {}, hiddenUserMessage = false, displayUserMessage = '' } = {}) {
+  async respond(userRequest, { onStart = () => {}, onToken = () => {}, onTrace = () => {}, onToolResult = () => {}, toolsEnabled = true, hiddenUserMessage = false, displayUserMessage = '' } = {}) {
     const content = typeof userRequest === 'string' ? userRequest.trim() : '';
     if (!content) throw new AgentError('Добавьте сообщение.', 400);
     if (this.busy) throw new AgentError('Агент уже обрабатывает сообщение.', 409);
@@ -373,6 +378,7 @@ ${invariants.map((item, index) => `${index + 1}. ${item}`).join('\n')}
     if (displayContent) this.messages.push({ role: 'user', content: displayContent, actionMessage: true });
     this.messages.push({ role: 'user', content, ...(hiddenUserMessage && { hidden: true }) });
     let answer = '';
+    const files = [];
     const previousStats = this.tokenStats;
     const previousContext = structuredClone(this.context);
     this.completionUsage = {};
@@ -412,12 +418,22 @@ ${invariants.map((item, index) => `${index + 1}. ${item}`).join('\n')}
       const summaryStats = await this.updateFacts(content);
       const inputEstimate = estimateHistory(this.contextMessages()) + estimateTokens(this.systemPrompt());
       const responseLimit = this.responseTokenLimit();
-      const upstream = await this.createCompletion();
       const guarded = preflight.invariantCount > 0;
       if (!guarded) onStart();
-      for await (const token of this.readCompletion(upstream)) {
-        answer += token;
-        if (!guarded) onToken(token);
+      if (this.openToolSession && toolsEnabled) {
+        const { runToolLoop } = await import('./mcp/tool-loop.mjs');
+        answer = await runToolLoop(this, { openSession: this.openToolSession, onTrace, onResult: (name, result) => {
+          const file = !result.isError && result.structuredContent?.file;
+          if (file && !files.some(item => item.downloadUrl === file.downloadUrl)) files.push(file);
+          onToolResult(name, result);
+        } });
+        if (!guarded) onToken(answer);
+      } else {
+        const upstream = await this.createCompletion();
+        for await (const token of this.readCompletion(upstream)) {
+          answer += token;
+          if (!guarded) onToken(token);
+        }
       }
       if (!answer) throw new AgentError('Сервис не вернул текст ответа.', 502);
       if (guarded) {
@@ -446,7 +462,7 @@ ${invariants.map((item, index) => `${index + 1}. ${item}`).join('\n')}
         onStart(); onToken(answer);
       }
       const invariantRefusal = this.context.lastInvariantCheck?.status === 'conflict';
-      this.messages.push({ role: 'assistant', content: answer, ...(invariantRefusal && { invariantRefusal: true }) });
+      this.messages.push({ role: 'assistant', content: answer, ...(files.length && { files }), ...(invariantRefusal && { invariantRefusal: true }) });
       this.tokenStats = {
         requestEstimate: estimateTokens(content),
         historyEstimate: estimateHistory(this.messages),
@@ -489,22 +505,23 @@ ${invariants.map((item, index) => `${index + 1}. ${item}`).join('\n')}
     }
   }
 
-  async createCompletion() {
-    if (this.settings.provider === 'gemini') return this.createGeminiCompletion();
+  async createCompletion(options = {}) {
+    if (this.settings.provider === 'gemini') return this.createGeminiCompletion(options);
 
     const isDeepSeek = this.settings.provider === 'deepseek';
     const environmentKey = isDeepSeek ? 'DEEPSEEK_API_KEY' : 'OPENROUTER_API_KEY';
     const apiKey = process.env[environmentKey];
     if (!apiKey) throw new AgentError(`В локальном файле .env не задан ${environmentKey}.`);
 
-    const systemPrompt = this.systemPrompt();
+    const systemPrompt = [this.systemPrompt(), options.toolPrompt].filter(Boolean).join('\n\n');
     const body = {
       model: this.settings.model,
-      messages: [...(systemPrompt ? [{ role: 'system', content: systemPrompt }] : []), ...this.contextMessages()],
+      messages: [...(systemPrompt ? [{ role: 'system', content: systemPrompt }] : []), ...(options.messages || this.contextMessages().map(({ role, content }) => ({ role, content })))],
+      ...(options.tools?.length && { tools: options.tools, tool_choice: 'auto', parallel_tool_calls: false }),
       temperature: this.settings.temperature,
       stream: true,
       ...(isDeepSeek && { thinking: { type: 'disabled' } }),
-      ...(this.settings.maxTokens !== undefined && { max_tokens: this.responseTokenLimit() }),
+      ...(this.settings.maxTokens !== undefined && { max_tokens: this.responseTokenLimit(options) }),
       ...(this.settings.stopSequence && { stop: [this.settings.stopSequence] }),
       ...(this.settings.jsonMode && { response_format: { type: 'json_object' } })
     };
@@ -522,20 +539,23 @@ ${invariants.map((item, index) => `${index + 1}. ${item}`).join('\n')}
     return { provider: this.settings.provider, body: upstream.body };
   }
 
-  async createGeminiCompletion() {
+  async createGeminiCompletion(options = {}) {
     const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) throw new AgentError('В локальном файле .env не задан GEMINI_API_KEY.');
 
-    const systemPrompt = this.systemPrompt();
+    const systemPrompt = [this.systemPrompt(), options.toolPrompt].filter(Boolean).join('\n\n');
     const body = {
-      contents: this.contextMessages().map(message => ({
+      contents: options.geminiContents || this.contextMessages().map(message => ({
         role: message.role === 'assistant' ? 'model' : 'user',
         parts: [{ text: message.content }]
       })),
+      ...(options.tools?.length && { tools: [{ functionDeclarations: options.tools.map(tool => ({
+        name: tool.function.name, description: tool.function.description, parametersJsonSchema: tool.function.parameters
+      })) }], toolConfig: { functionCallingConfig: { mode: 'AUTO' } } }),
       ...(systemPrompt && { systemInstruction: { parts: [{ text: systemPrompt }] } }),
       generationConfig: {
         temperature: this.settings.temperature,
-        ...(this.settings.maxTokens !== undefined && { maxOutputTokens: this.responseTokenLimit() }),
+        ...(this.settings.maxTokens !== undefined && { maxOutputTokens: this.responseTokenLimit(options) }),
         ...(this.settings.stopSequence && { stopSequences: [this.settings.stopSequence] }),
         ...(this.settings.jsonMode && { responseMimeType: 'application/json' })
       }
@@ -550,6 +570,10 @@ ${invariants.map((item, index) => `${index + 1}. ${item}`).join('\n')}
   }
 
   async *readCompletion(upstream) {
+    this.completionToolCalls = [];
+    this.completionParts = [];
+    this.completionReasoning = '';
+    this.finishReason = null;
     for await (const data of ssePayloads(upstream.body)) {
       if (!data || data === '[DONE]') continue;
       let payload;
@@ -569,6 +593,12 @@ ${invariants.map((item, index) => `${index + 1}. ${item}`).join('\n')}
         }
         this.finishReason = payload.candidates?.[0]?.finishReason || this.finishReason;
         for (const part of payload.candidates?.[0]?.content?.parts || []) {
+          this.completionParts.push(part);
+          if (part.functionCall) this.completionToolCalls.push({
+            id: part.functionCall.id || `gemini-${this.completionToolCalls.length}`,
+            ...(part.functionCall.id && { geminiId: part.functionCall.id }), type: 'function',
+            function: { name: part.functionCall.name, arguments: JSON.stringify(part.functionCall.args || {}) }
+          });
           if (part.text && !part.thought) yield part.text;
         }
       } else {
@@ -578,7 +608,17 @@ ${invariants.map((item, index) => `${index + 1}. ${item}`).join('\n')}
           }
         }
         this.finishReason = payload.choices?.[0]?.finish_reason || this.finishReason;
-        const token = payload.choices?.[0]?.delta?.content;
+        const delta = payload.choices?.[0]?.delta || {};
+        if (delta.reasoning_content) this.completionReasoning += delta.reasoning_content;
+        for (const fragment of delta.tool_calls || []) {
+          const index = fragment.index ?? 0;
+          if (!Number.isInteger(index) || index < 0 || index > 127) throw new AgentError('Некорректный индекс tool call.', 502);
+          const call = this.completionToolCalls[index] ||= { id: '', type: 'function', function: { name: '', arguments: '' } };
+          if (fragment.id) call.id += fragment.id;
+          if (fragment.function?.name) call.function.name += fragment.function.name;
+          if (fragment.function?.arguments) call.function.arguments += fragment.function.arguments;
+        }
+        const token = delta.content;
         if (token) yield token;
       }
     }

@@ -148,21 +148,6 @@ test('history is bounded but lifetime counters remain correct', t => {
   assert.equal(result.runs.length, 100);
 });
 
-test('schedule parser handles the requested Russian weather example and reminders', async () => {
-  const { scheduleArguments } = await import('../mcp/client.mjs');
-  assert.deepEqual(scheduleArguments('мониторинг погоды в москве каждую минуту'), { kind: 'weather', location: 'Москва', intervalSeconds: 60 });
-  assert.deepEqual(scheduleArguments('мониторинг погоды в Москве каждые 30 секунд'), { kind: 'weather', location: 'Москва', intervalSeconds: 30 });
-  assert.deepEqual(scheduleArguments('weather in Moscow every 30 seconds'), { kind: 'weather', location: 'Moscow', intervalSeconds: 30 });
-  assert.deepEqual(scheduleArguments('напомни проверить данные каждые 30 секунд'), { kind: 'reminder', message: 'проверить данные', intervalSeconds: 30, delaySeconds: 30 });
-  assert.throws(() => scheduleArguments('погода в Москве каждые 29 секунд'), /30 секунд/);
-  assert.deepEqual(scheduleArguments('Погода в Москве каждые 5 минут'), { kind: 'weather', location: 'Москва', intervalSeconds: 300 });
-  assert.deepEqual(scheduleArguments('напомни через 10 минут сделать перерыв'), { kind: 'reminder', message: 'сделать перерыв', delaySeconds: 600 });
-  assert.deepEqual(scheduleArguments('напомни пить воду каждый час'), { kind: 'reminder', message: 'пить воду', intervalSeconds: 3600, delaySeconds: 3600 });
-  assert.equal(scheduleArguments('Какая погода в Москве?'), null);
-  assert.throws(() => scheduleArguments('мониторинг погоды в Москве'), /Укажите расписание/);
-  assert.throws(() => scheduleArguments('погода в Москве каждые 0 минут'), /Недопустимый/);
-});
-
 test('MCP tools persist a job across connections and return aggregated results', async t => {
   const { store, file } = database(t);
   const { callToolForAgent, listMcpTools } = await import('../mcp/client.mjs');
@@ -186,11 +171,27 @@ test('MCP tools persist a job across connections and return aggregated results',
   await assert.rejects(invalid);
 });
 
-test('HTTP chat creates a reminder without LLM; server restart executes it and preserves history', { timeout: 20000 }, async t => {
+test('HTTP chat executes an LLM-selected reminder; server restart preserves its history', { timeout: 20000 }, async t => {
   const { spawn } = require('node:child_process');
   const { once } = require('node:events');
   const { setTimeout: delay } = require('node:timers/promises');
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-schedule-http-'));
+  const preload = path.join(dir, 'mock-llm.cjs');
+  fs.writeFileSync(preload, `
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async (url, init) => {
+      if (url !== 'https://api.deepseek.com/chat/completions') return originalFetch(url, init);
+      const body = JSON.parse(init.body);
+      require('node:assert/strict').equal(body.tool_choice, 'auto');
+      const finished = body.messages.some(message => message.role === 'tool');
+      const delta = finished ? { content: 'Расписание создано' } : {
+        tool_calls: [{ index: 0, id: 'reminder-call', type: 'function', function: {
+          name: 'schedule_task', arguments: JSON.stringify({ kind: 'reminder', message: 'сделать перерыв', delaySeconds: 3 })
+        } }]
+      };
+      return new Response('data: ' + JSON.stringify({ choices: [{ delta, finish_reason: finished ? 'stop' : 'tool_calls' }] }) + '\\n\\ndata: [DONE]\\n\\n');
+    };
+  `);
   let child;
   async function stop() {
     if (!child || child.exitCode !== null) return;
@@ -200,7 +201,7 @@ test('HTTP chat creates a reminder without LLM; server restart executes it and p
   }
   t.after(async () => { await stop(); fs.rmSync(dir, { recursive: true, force: true }); });
   async function start() {
-    child = spawn(process.execPath, [path.join(__dirname, '..', 'server.js')], {
+    child = spawn(process.execPath, ['--require', preload, path.join(__dirname, '..', 'server.js')], {
       env: { ...process.env, PORT: '0', SCHEDULE_DB_PATH: path.join(dir, 'schedule.sqlite'),
         AGENT_DB_PATH: path.join(dir, 'agent.sqlite'), DEEPSEEK_API_KEY: 'unused-test-key' },
       windowsHide: true, stdio: ['ignore', 'pipe', 'pipe']

@@ -24,6 +24,31 @@ export const weatherOutputSchema = z.object({
   }))
 });
 
+export function weatherText(weather) {
+  const unit = weather.units.temperature;
+  return [`Погода: ${weather.location}. Источник: ${weather.source}. Часовой пояс: ${weather.timezone}.`,
+    `Сейчас (${weather.current.observedAt}): ${weather.current.conditions}, ${weather.current.temperature} ${unit}.`,
+    ...weather.forecast.map(day => `${day.date}: ${day.conditions}; минимум ${day.minTemperature} ${unit}, максимум ${day.maxTemperature} ${unit}; вероятность осадков ${day.precipitationProbability}%.`)
+  ].join('\n');
+}
+
+export function summarizeWeather(weather, maxSentences = 3) {
+  const days = weather.forecast;
+  if (!days.length) throw new Error('Прогноз пуст: нечего суммировать.');
+  const range = key => ({ min: Math.min(...days.map(day => day[key])), max: Math.max(...days.map(day => day[key])) });
+  const conditions = {};
+  for (const day of days) conditions[day.conditions] = (conditions[day.conditions] || 0) + 1;
+  const aggregate = { days: days.length, from: days[0].date, to: days.at(-1).date,
+    dailyLow: range('minTemperature'), dailyHigh: range('maxTemperature'), precipitationProbability: range('precipitationProbability'), conditions };
+  const format = ({ min, max }) => min === max ? `${min}` : `${min}…${max}`;
+  const sentences = [
+    `${weather.location}, ${aggregate.from} — ${aggregate.to}: суточные минимумы ${format(aggregate.dailyLow)} ${weather.units.temperature}, максимумы ${format(aggregate.dailyHigh)} ${weather.units.temperature}.`,
+    `Условия за весь период: ${Object.entries(conditions).map(([name, count]) => `${name} — ${count} из ${days.length} дней`).join('; ')}.`,
+    `Вероятность осадков ${format(aggregate.precipitationProbability)}%.`
+  ];
+  return { text: sentences.slice(0, maxSentences).join(' '), aggregate, source: weather.source };
+}
+
 async function fetchJson(url, label) {
   const response = await fetch(url, { headers: { 'User-Agent': 'agent-mcp-weather/1.0' }, signal: AbortSignal.timeout(10_000) });
   if (!response.ok) throw new Error(`${label} вернул ${response.status}.`);
