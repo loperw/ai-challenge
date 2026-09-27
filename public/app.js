@@ -281,6 +281,7 @@ function renderChat() {
   renderChatTitle(chat);
   renderInvariantControl();
   renderWorkspaceMode();
+  renderMcpTrace();
   messagesEl.innerHTML = '';
   visibleMessages(chat).forEach(message => addMessage(message.role, message.content, message.pending, message.memoryCommand, message.memoryType, message.invariantRefusal));
   if (!visibleMessages(chat).length) {
@@ -315,10 +316,13 @@ function renderWorkspaceMode() {
   document.querySelector('#settingsTab').hidden = isTask || sidePanel !== 'primary';
   document.querySelector('#processTab').hidden = !isTask || sidePanel !== 'primary';
   document.querySelector('#memoryTab').hidden = sidePanel !== 'memory';
+  document.querySelector('#mcpTab').hidden = sidePanel !== 'mcp';
   document.querySelector('#settingsTabButton').classList.toggle('active', sidePanel === 'primary');
   document.querySelector('#memoryTabButton').classList.toggle('active', sidePanel === 'memory');
+  document.querySelector('#mcpTabButton').classList.toggle('active', sidePanel === 'mcp');
   document.querySelector('#settingsTabButton').setAttribute('aria-selected', String(sidePanel === 'primary'));
   document.querySelector('#memoryTabButton').setAttribute('aria-selected', String(sidePanel === 'memory'));
+  document.querySelector('#mcpTabButton').setAttribute('aria-selected', String(sidePanel === 'mcp'));
   promptEl.disabled = Boolean(isTask && task.paused);
   if (isTask && task.paused) sendButton.disabled = true;
   else if (isTask && !task.busyAction && !task.messages.some(message => message.pending)) sendButton.disabled = false;
@@ -514,6 +518,55 @@ function renderMemory() {
 }
 document.querySelector('#settingsTabButton').addEventListener('click', () => { sidePanel = 'primary'; renderWorkspaceMode(); });
 document.querySelector('#memoryTabButton').addEventListener('click', () => { sidePanel = 'memory'; renderWorkspaceMode(); renderMemory(); });
+document.querySelector('#mcpTabButton').addEventListener('click', () => { sidePanel = 'mcp'; renderWorkspaceMode(); renderMcpTrace(); });
+document.querySelector('#mcpExample').addEventListener('click', () => {
+  promptEl.value = 'Какая погода в Москве на 3 дня?';
+  promptEl.dispatchEvent(new Event('input')); promptEl.focus();
+});
+
+function jsonBlock(value) {
+  const pre = document.createElement('pre'); pre.className = 'mcp-json';
+  pre.textContent = JSON.stringify(value, null, 2); return pre;
+}
+
+function renderMcpTrace() {
+  const root = document.querySelector('#mcpTrace');
+  const trace = currentChat()?.mcpTrace;
+  if (!trace) {
+    root.innerHTML = '<div class="mcp-empty"><strong>Вызовов пока нет</strong><span>Отправьте погодный запрос в Agent chat. Здесь появятся этапы, схемы, аргументы и ответ tool.</span></div>';
+    return;
+  }
+  root.replaceChildren();
+  const header = document.createElement('div'); header.className = 'mcp-run-header';
+  const identity = document.createElement('div');
+  const label = document.createElement('span'); label.textContent = trace.server ? `${trace.server.name} · v${trace.server.version}` : 'MCP stdio · подключение';
+  const tool = document.createElement('strong'); tool.textContent = trace.tool?.name || 'Выбор tool…';
+  identity.append(label, tool);
+  const status = document.createElement('span'); status.className = `mcp-status ${trace.status}`;
+  status.textContent = trace.status === 'done' ? 'Готово' : trace.status === 'error' ? 'Ошибка' : 'Вызов…';
+  header.append(identity, status); root.append(header);
+  if (trace.error) { const error = document.createElement('p'); error.className = 'mcp-error'; error.textContent = trace.error; root.append(error); }
+  const timeline = document.createElement('ol'); timeline.className = 'mcp-timeline';
+  for (const [index, step] of (trace.steps || []).entries()) {
+    const item = document.createElement('li'); item.className = `mcp-step ${step.status}`;
+    const marker = document.createElement('span'); marker.className = 'mcp-step-marker';
+    marker.textContent = step.status === 'done' ? '✓' : step.status === 'error' ? '!' : index + 1;
+    const details = document.createElement('details'); details.open = ['running', 'error'].includes(step.status) || step.id === 'call' && trace.status === 'done';
+    const summary = document.createElement('summary');
+    const title = document.createElement('span'); title.textContent = step.title;
+    const method = document.createElement('code'); method.textContent = step.method;
+    summary.append(title, method); details.append(summary);
+    const schemaTitle = document.createElement('p'); schemaTitle.className = 'mcp-data-label'; schemaTitle.textContent = 'Схема этапа';
+    details.append(schemaTitle, jsonBlock(step.schema || {}));
+    if (step.data !== undefined) {
+      const dataTitle = document.createElement('p'); dataTitle.className = 'mcp-data-label'; dataTitle.textContent = step.id === 'call' ? 'Ответ MCP tool' : 'Фактические данные';
+      details.append(dataTitle, jsonBlock(step.data));
+    }
+    if (step.error) { const message = document.createElement('p'); message.className = 'mcp-error'; message.textContent = step.error; details.append(message); }
+    item.append(marker, details); timeline.append(item);
+  }
+  root.append(timeline);
+}
 
 function closeInvariantModal() {
   invariantModal.hidden = true;
@@ -608,7 +661,7 @@ async function apiFetch(path, options) {
     throw error;
   }
 }
-async function readStream(response, onToken, onStats = () => {}) {
+async function readStream(response, onToken, onStats = () => {}, onMcpTrace = () => {}) {
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
@@ -624,6 +677,7 @@ async function readStream(response, onToken, onStats = () => {}) {
       if (data === '[DONE]') return;
       const chunk = JSON.parse(data);
       if (chunk.error) throw new Error(chunk.error);
+      if (chunk.mcpTrace) onMcpTrace(chunk.mcpTrace);
       if (chunk.tokenStats) onStats(chunk.tokenStats, chunk.context, chunk.messages);
       const token = chunk.choices?.[0]?.delta?.content;
       if (token) onToken(token);
@@ -816,6 +870,8 @@ async function sendConversationMessage(text, { taskAction = false, taskActionLab
   }
   const previousStats = chat.tokenStats;
   const previousContext = chat.context;
+  chat.mcpTrace = null;
+  if (currentChat()?.id === chat.id) renderMcpTrace();
   const userMessage = { role: 'user', content: text, ...(taskAction && { hidden: true }) };
   const actionMessage = taskAction && taskActionLabel ? { role: 'user', content: taskActionLabel, actionMessage: true } : null;
   if (actionMessage) { chat.messages.push(actionMessage); chat.history.push(actionMessage); }
@@ -866,6 +922,10 @@ async function sendConversationMessage(text, { taskAction = false, taskActionLab
       chat.context = context;
       const savedAssistantMessage = [...(messages || [])].reverse().find(message => message.role === 'assistant');
       assistantMessage.invariantRefusal = Boolean(savedAssistantMessage?.invariantRefusal);
+    }, trace => {
+      chat.mcpTrace = trace;
+      if (isActive()) { sidePanel = 'mcp'; renderWorkspaceMode(); renderMcpTrace(); }
+      saveChats();
     });
     if (!answer) throw new Error('Сервис не вернул текст ответа.');
     chat.history.push({ role: 'assistant', content: answer, invariantRefusal: assistantMessage.invariantRefusal });

@@ -23,6 +23,7 @@ const store = new SQLiteStore(path.join(__dirname, 'data', 'agent-memory.sqlite'
 });
 const memoryStore = store;
 const agents = new AgentRegistry({ store, memoryStore });
+const mcpClientPromise = import('./mcp/client.mjs');
 
 function sendJson(response, status, data) {
   response.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' });
@@ -40,6 +41,11 @@ function startStream(response) {
 
 function writeToken(response, token) {
   response.write(`data: ${JSON.stringify({ choices: [{ delta: { content: token } }] })}\n\n`);
+}
+
+function writeMcpTrace(response, trace) {
+  startStream(response);
+  response.write(`data: ${JSON.stringify({ mcpTrace: trace })}\n\n`);
 }
 
 async function readBody(request) {
@@ -76,6 +82,7 @@ function invariantFields(body) {
 
 async function handleChat(request, response) {
   let task = null;
+  let mcpInvocation = null;
   try {
     const body = await readBody(request);
     if (!body.ephemeral && !validConversationId(body.conversationId)) {
@@ -103,6 +110,13 @@ async function handleChat(request, response) {
       task.plan.length ? `Утверждённый или подготовленный план:\n${task.plan.map((step, index) => `${index + 1}. [${step.done ? 'готово' : 'не готово'}] ${step.title}`).join('\n')}` : '',
       taskLifecycleInstructions(task, { taskAction: Boolean(body.taskAction), event: taskEvent })
     ].filter(Boolean).join('\n') : '';
+    if (!body.ephemeral && !body.taskAction) {
+      const { callWeatherForAgent } = await mcpClientPromise;
+      mcpInvocation = await callWeatherForAgent(body.message, {
+        previousMessages: store.chats[body.conversationId]?.messages || [],
+        onTrace: trace => writeMcpTrace(response, trace)
+      });
+    }
     const settings = {
       provider: body.provider,
       model: body.model,
@@ -113,7 +127,9 @@ async function handleChat(request, response) {
       contextStrategy: body.contextStrategy,
       stopSequence: body.stopSequence,
       profileId: body.profileId,
-      systemPrompt: [process.env.AGENT_SYSTEM_PROMPT || '', taskContext].filter(Boolean).join('\n\n'),
+      systemPrompt: [process.env.AGENT_SYSTEM_PROMPT || '', taskContext,
+        mcpInvocation?.context || 'В этом ходе MCP-инструмент не вызывался. Не утверждай, что использовал MCP, и не повторяй строку «Источник: MCP tool» из прошлых ответов.'
+      ].filter(Boolean).join('\n\n'),
       taskMode: Boolean(task)
     };
     if (settings.profileId && !store.getProfile(settings.profileId)) {
@@ -132,6 +148,10 @@ async function handleChat(request, response) {
       hiddenUserMessage: Boolean(task && body.taskAction),
       displayUserMessage: task && body.taskAction ? body.taskActionLabel : ''
     });
+    if (mcpInvocation) {
+      const { completeAgentTrace } = await mcpClientPromise;
+      completeAgentTrace(mcpInvocation.trace, trace => writeMcpTrace(response, trace));
+    }
     response.write(`data: ${JSON.stringify({ tokenStats: agent.tokenStats, context: agent.context, messages: agent.messages })}\n\n`);
     response.end('data: [DONE]\n\n');
   } catch (error) {
