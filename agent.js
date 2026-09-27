@@ -265,6 +265,20 @@ ${invariants.map((item, index) => `${index + 1}. ${item}`).join('\n')}
     this.recordShortTerm([message]);
   }
 
+  recordToolExchange(content, answer) {
+    const messages = [{ role: 'user', content }, { role: 'assistant', content: answer }];
+    this.messages.push(...messages);
+    if (this.settings.contextStrategy !== 'branching') {
+      const recent = this.messages.filter(message => !message.memoryCommand).slice(-this.settings.keepMessages);
+      this.messages = this.messages.filter(message => message.memoryCommand || recent.includes(message));
+    }
+    if (this.settings.contextStrategy === 'branching' && this.context.branches?.[this.context.activeBranch]) {
+      this.context.branches[this.context.activeBranch].messages = structuredClone(this.messages);
+    }
+    this.persist(this.settings, this.messages, this.tokenStats, this.context);
+    this.recordShortTerm(messages);
+  }
+
   async updateFacts(content) {
     if (this.settings.contextStrategy !== 'facts') return null;
     const extractor = new Agent({ ...this.settings, contextStrategy: 'sliding', maxTokens: undefined,

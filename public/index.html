@@ -56,6 +56,7 @@
         <button id="settingsTabButton" class="side-tab active" type="button" role="tab" aria-selected="true" aria-controls="settingsTab">Настройки</button>
         <button id="memoryTabButton" class="side-tab" type="button" role="tab" aria-selected="false" aria-controls="memoryTab">Память агента</button>
         <button id="mcpTabButton" class="side-tab" type="button" role="tab" aria-selected="false" aria-controls="mcpTab">MCP трассировка</button>
+        <button id="monitorTabButton" class="side-tab" type="button" role="tab" aria-selected="false" aria-controls="monitorTab">Мониторинг <span id="monitorCount">0</span></button>
       </div>
       <section id="processTab" class="side-tab-panel process-panel" role="tabpanel" aria-labelledby="settingsTabButton" hidden>
         <div class="settings-title"><span id="processStatusIcon" class="settings-icon process-icon">◇</span><div><p class="eyebrow">ЗАДАЧА</p><h2 id="processTaskName">Процесс</h2></div></div>
@@ -147,6 +148,13 @@
           <div id="longMemoryList" class="memory-list"></div>
         </section>
       </section>
+      <section id="monitorTab" class="side-tab-panel monitor-panel" role="tabpanel" aria-labelledby="monitorTabButton" hidden>
+        <div class="settings-title"><span class="settings-icon mcp-icon">↻</span><div><p class="eyebrow">ФОНОВЫЕ ЗАДАНИЯ</p><h2>Мониторинг</h2></div></div>
+        <p class="memory-description">Расписания из всех чатов. Сбор продолжается при закрытой странице, пока сервер работает. После перезапуска задания возобновятся.</p>
+        <button id="monitorExample" class="monitor-example" type="button">Погода в Москве каждую минуту</button>
+        <p id="monitorConnection" class="memory-description" role="status">Подключение…</p>
+        <div id="monitorJobs"></div>
+      </section>
       <section id="mcpTab" class="side-tab-panel mcp-panel" role="tabpanel" aria-labelledby="mcpTabButton" hidden>
         <div class="settings-title"><span class="settings-icon mcp-icon">M</span><div><p class="eyebrow">MODEL CONTEXT PROTOCOL</p><h2>Трассировка MCP</h2></div></div>
         <p class="mcp-intro">Агент сам вызывает <code>get_weather</code> для запросов о погоде. Пример: <button id="mcpExample" type="button">«Какая погода в Москве на 3 дня?»</button></p>
@@ -220,5 +228,6 @@
   </div>
   <script src="token-counter.js"></script>
   <script src="app.js"></script>
+  <script src="monitor.js"></script>
 </body>
 </html>

@@ -17,13 +17,16 @@ if (fs.existsSync(envPath)) {
 }
 
 const { SQLiteStore } = require('./sqlite-store');
-const store = new SQLiteStore(path.join(__dirname, 'data', 'agent-memory.sqlite'), {
-  legacyConversationsPath: path.join(__dirname, 'data', 'conversations.json'),
-  legacyMemoryPath: path.join(__dirname, 'data', 'memory.json')
+const store = new SQLiteStore(process.env.AGENT_DB_PATH || path.join(__dirname, 'data', 'agent-memory.sqlite'), {
+  legacyConversationsPath: process.env.AGENT_DB_PATH ? undefined : path.join(__dirname, 'data', 'conversations.json'),
+  legacyMemoryPath: process.env.AGENT_DB_PATH ? undefined : path.join(__dirname, 'data', 'memory.json')
 });
 const memoryStore = store;
 const agents = new AgentRegistry({ store, memoryStore });
 const mcpClientPromise = import('./mcp/client.mjs');
+const { ScheduleStore, startScheduler } = require('./scheduler');
+const schedules = new ScheduleStore();
+let scheduler;
 
 function sendJson(response, status, data) {
   response.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' });
@@ -111,7 +114,27 @@ async function handleChat(request, response) {
       taskLifecycleInstructions(task, { taskAction: Boolean(body.taskAction), event: taskEvent })
     ].filter(Boolean).join('\n') : '';
     if (!body.ephemeral && !body.taskAction) {
-      const { callWeatherForAgent } = await mcpClientPromise;
+      const { callWeatherForAgent, scheduleArguments, callToolForAgent, completeAgentTrace } = await mcpClientPromise;
+      const schedule = scheduleArguments(body.message);
+      if (schedule) {
+        if (task) throw new AgentError('Создайте мониторинг в обычном чате. В режиме задачи действует утверждённый план.', 400);
+        if (body.profileId && !store.getProfile(body.profileId)) throw new AgentError('Выбранный профиль не найден.', 400);
+        const agent = agents.get(body.conversationId, body);
+        if (agent.busy) throw new AgentError('Дождитесь завершения ответа агента.', 409);
+        agent.busy = true;
+        try {
+          const invocation = await callToolForAgent('schedule_task', schedule, { onTrace: trace => writeMcpTrace(response, trace) });
+          const job = invocation.trace.result.job;
+          const frequency = job.intervalSeconds === 60 ? 'каждую минуту' : job.intervalSeconds
+            ? `с интервалом ${job.intervalSeconds % 60 ? `${job.intervalSeconds} сек` : `${job.intervalSeconds / 60} мин`}` : 'однократно';
+          const answer = `Расписание создано: ${job.title}; ${frequency}. Первый запуск: ${new Date(job.nextRunAt).toLocaleString('ru-RU')}.\nРезультаты и сводка автоматически появятся во вкладке «Мониторинг». Сбор продолжается при закрытой странице, пока сервер работает.\nID: ${job.id}\nИсточник: MCP tool schedule_task (SQLite).`;
+          agent.recordToolExchange(body.message, answer);
+          completeAgentTrace(invocation.trace, trace => writeMcpTrace(response, trace));
+          writeToken(response, answer);
+          response.write(`data: ${JSON.stringify({ scheduleCreated: job.id })}\n\n`);
+          return response.end('data: [DONE]\n\n');
+        } finally { agent.busy = false; }
+      }
       mcpInvocation = await callWeatherForAgent(body.message, {
         previousMessages: store.chats[body.conversationId]?.messages || [],
         onTrace: trace => writeMcpTrace(response, trace)
@@ -180,6 +203,25 @@ async function handleReset(request, response) {
 }
 
 const server = http.createServer(async (request, response) => {
+  if (request.method === 'GET' && request.url === '/api/schedules') {
+    return sendJson(response, 200, { jobs: schedules.list() });
+  }
+  const scheduleRoute = request.url.match(/^\/api\/schedules\/([a-f0-9-]+)$/i);
+  if (scheduleRoute && ['GET', 'PATCH', 'DELETE'].includes(request.method)) {
+    try {
+      const { callToolForAgent } = await mcpClientPromise;
+      if (request.method === 'DELETE') {
+        const result = await callToolForAgent('delete_schedule', { id: scheduleRoute[1] });
+        return sendJson(response, 200, result.trace.result);
+      }
+      if (request.method === 'PATCH') {
+        const { status } = await readBody(request);
+        const result = await callToolForAgent('set_schedule_status', { id: scheduleRoute[1], status });
+        return sendJson(response, 200, result.trace.result);
+      }
+      return sendJson(response, 200, schedules.results(scheduleRoute[1]));
+    } catch (error) { return sendJson(response, 400, { error: error.message }); }
+  }
   if (request.method === 'GET' && request.url === '/api/tasks') {
     const chats = store.chats;
     return sendJson(response, 200, { tasks: store.listTasks().map(task => ({
@@ -355,7 +397,7 @@ const server = http.createServer(async (request, response) => {
     globalInvariants: store.listGlobalInvariants()
   });
   if (request.method === 'POST' && request.url === '/api/chats/clear') {
-    try { agents.clear(); memoryStore.clear(); return sendJson(response, 200, { ok: true }); }
+    try { agents.clear(); memoryStore.clear(); schedules.clear(); return sendJson(response, 200, { ok: true }); }
     catch (error) { return sendJson(response, error.status || 500, { error: error.message }); }
   }
   if (request.method === 'POST' && request.url === '/api/chat') return handleChat(request, response);
@@ -374,4 +416,16 @@ const server = http.createServer(async (request, response) => {
   });
 });
 
-server.listen(process.env.PORT || 3000, () => console.log('Open http://localhost:3000'));
+server.listen(process.env.PORT || 3000, () => {
+  scheduler = startScheduler(schedules, {
+    weather: async input => (await import('./mcp/weather.mjs')).getWeather(input)
+  });
+  console.log(`Open http://localhost:${server.address().port}`);
+});
+
+for (const signal of ['SIGINT', 'SIGTERM']) process.once(signal, async () => {
+  server.close();
+  await scheduler?.stop();
+  schedules.close();
+  process.exit(0);
+});

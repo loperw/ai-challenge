@@ -317,6 +317,9 @@ function renderWorkspaceMode() {
   document.querySelector('#processTab').hidden = !isTask || sidePanel !== 'primary';
   document.querySelector('#memoryTab').hidden = sidePanel !== 'memory';
   document.querySelector('#mcpTab').hidden = sidePanel !== 'mcp';
+  document.querySelector('#monitorTab').hidden = sidePanel !== 'monitor';
+  document.querySelector('#monitorTabButton').classList.toggle('active', sidePanel === 'monitor');
+  document.querySelector('#monitorTabButton').setAttribute('aria-selected', String(sidePanel === 'monitor'));
   document.querySelector('#settingsTabButton').classList.toggle('active', sidePanel === 'primary');
   document.querySelector('#memoryTabButton').classList.toggle('active', sidePanel === 'memory');
   document.querySelector('#mcpTabButton').classList.toggle('active', sidePanel === 'mcp');
@@ -678,6 +681,7 @@ async function readStream(response, onToken, onStats = () => {}, onMcpTrace = ()
       const chunk = JSON.parse(data);
       if (chunk.error) throw new Error(chunk.error);
       if (chunk.mcpTrace) onMcpTrace(chunk.mcpTrace);
+      if (chunk.scheduleCreated) { sidePanel = 'monitor'; renderWorkspaceMode(); refreshMonitoring(); }
       if (chunk.tokenStats) onStats(chunk.tokenStats, chunk.context, chunk.messages);
       const token = chunk.choices?.[0]?.delta?.content;
       if (token) onToken(token);
@@ -964,6 +968,7 @@ document.querySelector('#clearAll').addEventListener('click', async () => {
   try {
     const response = await apiFetch('/api/chats/clear', { method: 'POST' });
     if (!response.ok) throw new Error((await response.json()).error);
+    resetMonitoring();
     localStorage.removeItem(storageKey); sessionStorage.removeItem(storageKey);
     longTermMemory = [];
     globalInvariants = [];

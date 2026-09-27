@@ -4,9 +4,10 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const defaultServerPath = fileURLToPath(new URL('./server.mjs', import.meta.url));
 
-function clientConnection({ command = process.execPath, args = [defaultServerPath], cwd = process.cwd(), stderr = 'inherit' } = {}) {
+function clientConnection({ command = process.execPath, args = [defaultServerPath], cwd = process.cwd(), stderr = 'inherit', env = {} } = {}) {
   const client = new Client({ name: 'agent-chat-mcp-client', version: '1.0.0' });
-  const transport = new StdioClientTransport({ command, args, cwd, stderr });
+  const transport = new StdioClientTransport({ command, args, cwd, stderr,
+    env: { ...(process.env.SCHEDULE_DB_PATH && { SCHEDULE_DB_PATH: process.env.SCHEDULE_DB_PATH }), ...env } });
   return { client, transport };
 }
 
@@ -59,8 +60,36 @@ function traceStep(id, title, method, schema, status = 'waiting') {
   return { id, title, method, status, schema };
 }
 
-export async function callWeatherForAgent(message, { onTrace = () => {}, connection = {}, previousMessages = [] } = {}) {
-  const toolArguments = weatherArguments(message, { previousMessages });
+export function scheduleArguments(message) {
+  const text = typeof message === 'string' ? message.trim() : '';
+  const reminder = /^(?:напомни|напоминание)\s/iu.test(text);
+  const weather = /погод|weather/iu.test(text) && /монитор|кажд|every|регуляр|периодич|через/iu.test(text);
+  if (!reminder && !weather) return null;
+  const timing = text.match(/(?:кажд(?:ую|ые|ый|ое)\s+(?:(\d+)\s+)?(секунд\p{L}*|минут\p{L}*|час\p{L}*|день|дня|дней|сутки)|every\s+(?:(\d+)\s+)?(seconds?|minutes?|hours?|days?)|через\s+(\d+)\s+(секунд\p{L}*|минут\p{L}*|час\p{L}*|день|дня|дней))/iu);
+  if (!timing) throw new Error('Укажите расписание: «каждые 30 секунд», «каждую минуту», «каждый час» или «через 10 минут».');
+  const amount = Number(timing[1] || timing[3] || timing[5] || 1);
+  const unit = timing[2] || timing[4] || timing[6];
+  const seconds = amount * (/^секунд|^second/iu.test(unit) ? 1 : /^минут|^minute/iu.test(unit) ? 60 : /^час|^hour/iu.test(unit) ? 3600 : 86400);
+  const once = /^через/iu.test(timing[0]);
+  if (seconds < (once ? 1 : 30) || seconds > (once ? 31536000 : 2592000)) throw new Error('Недопустимый интервал расписания. Минимальный период — 30 секунд.');
+  const schedule = once ? { delaySeconds: seconds } : { intervalSeconds: seconds };
+  const rest = `${text.slice(0, timing.index)} ${text.slice(timing.index + timing[0].length)}`.replace(/\s+/gu, ' ').trim();
+  if (reminder) {
+    const content = rest.replace(/^(?:напомни|напоминание)\s*/iu, '').replace(/^[:,\s]+/u, '').trim();
+    if (!content) throw new Error('Добавьте текст напоминания.');
+    return { kind: 'reminder', message: content, ...schedule, ...(!once && { delaySeconds: seconds }) };
+  }
+  const args = weatherArguments(rest);
+  if (!args) throw new Error('Укажите город, например: «мониторинг погоды в Москве каждую минуту».');
+  return { kind: 'weather', location: args.location, ...schedule };
+}
+
+export async function callWeatherForAgent(message, options = {}) {
+  const args = weatherArguments(message, options);
+  return args ? callToolForAgent('get_weather', args, options) : null;
+}
+
+export async function callToolForAgent(toolName, toolArguments, { onTrace = () => {}, connection = {} } = {}) {
   if (!toolArguments) return null;
   const trace = {
     id: `${Date.now()}-${Math.random().toString(16).slice(2)}`, status: 'running', startedAt: new Date().toISOString(),
@@ -70,7 +99,7 @@ export async function callWeatherForAgent(message, { onTrace = () => {}, connect
       traceStep('route', 'Выбор инструмента', 'Agent router', { input: { message: 'string', tools: 'Tool[]' }, output: { tool: 'string', arguments: 'object' } }),
       traceStep('validate', 'Валидация аргументов', 'JSON Schema', { pending: 'Схема будет получена из tools/list' }),
       traceStep('call', 'Вызов MCP tool', 'tools/call', { input: { name: 'string', arguments: 'object' }, output: { content: 'Content[]', structuredContent: 'object' } }),
-      traceStep('use', 'Использование результата', 'MCP → Agent context → LLM', { input: { tool: 'string', result: 'structuredContent' }, output: { answer: 'string' } })
+      traceStep('use', 'Использование результата', 'MCP → Agent → ответ', { input: { tool: 'string', result: 'structuredContent' }, output: { answer: 'string' } })
     ]
   };
   const emit = () => onTrace(structuredClone(trace));
@@ -89,8 +118,8 @@ export async function callWeatherForAgent(message, { onTrace = () => {}, connect
     trace.steps[0].status = 'done'; trace.steps[0].data = { server: trace.server, tools: tools.map(tool => tool.name) };
     trace.steps[1].status = 'running'; emit();
 
-    const tool = tools.find(item => item.name === 'get_weather');
-    if (!tool) throw new Error('MCP-сервер не зарегистрировал get_weather.');
+    const tool = tools.find(item => item.name === toolName);
+    if (!tool) throw new Error(`MCP-сервер не зарегистрировал ${toolName}.`);
     trace.tool = { name: tool.name, title: tool.title, description: tool.description };
     trace.steps[1].status = 'done'; trace.steps[1].data = { tool: tool.name, arguments: toolArguments };
     trace.steps[2].status = 'running'; trace.steps[2].schema = { inputSchema: tool.inputSchema }; emit();
@@ -115,7 +144,7 @@ export async function callWeatherForAgent(message, { onTrace = () => {}, connect
 export function completeAgentTrace(trace, onTrace = () => {}) {
   if (!trace) return;
   trace.status = 'done'; trace.completedAt = new Date().toISOString();
-  const last = trace.steps.at(-1); last.status = 'done'; last.data = { answer: 'Результат MCP добавлен в контекст и использован моделью.' };
+  const last = trace.steps.at(-1); last.status = 'done'; last.data = { answer: 'Результат MCP использован в ответе агента.' };
   onTrace(structuredClone(trace));
 }
 

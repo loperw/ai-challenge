@@ -134,6 +134,27 @@ html, body { height:100%; overflow:hidden; }
 }
 
 /* Task workspace */
+.side-tabs { flex-wrap:wrap; }
+.monitor-card { margin:14px 0; padding:14px; border:1px solid var(--line); border-radius:12px; background:#fff; overflow-wrap:anywhere; }
+.monitor-card header { display:flex; flex-wrap:wrap; justify-content:space-between; gap:8px; align-items:center; }
+.monitor-card h3 { margin:0; font-size:13px; }
+.monitor-status { border-radius:12px; padding:4px 7px; background:#f1f1f6; font-size:10px; color:#666; }
+.monitor-status.active { background:#e5f6ee; color:#237752; }
+.monitor-status.paused { background:#fff3da; color:#946811; }
+.monitor-meta { display:block; margin:8px 0; color:#757d8a; font-size:10px; line-height:1.5; }
+.monitor-controls { display:flex; flex-wrap:wrap; gap:8px; margin:10px 0; }
+.monitor-controls button,.monitor-example { padding:7px 10px; border:1px solid #dcd9ee; border-radius:8px; background:#f6f4ff; color:#6656bd; font:inherit; font-size:11px; cursor:pointer; }
+.monitor-controls button:disabled { opacity:.5; cursor:wait; }
+.monitor-controls .monitor-delete { color:#963641; border-color:#ecd4d8; background:#fff5f6; }
+.monitor-summary { padding:10px; border-radius:8px; background:#eff7f4; font-size:11px; line-height:1.5; }
+.monitor-summary p { margin:5px 0; }
+.monitor-summary small { color:#65786d; }
+.monitor-latest { font-size:12px; line-height:1.6; }
+.monitor-card details { margin-top:12px; font-size:11px; }
+.monitor-card summary { cursor:pointer; }
+.monitor-history { max-height:240px; overflow:auto; padding-left:18px; line-height:1.6; }
+.monitor-history li { margin:8px 0; }
+.monitor-empty { margin:20px 0; color:#757d8a; line-height:1.6; font-size:12px; }
 .task-history-label { margin-top:24px; }
 .task-history { max-height:220px; }
 .history-chat.task-entry::before { content:'◇'; flex:none; color:#877be7; font-size:13px; }
