@@ -16,7 +16,7 @@ const inputData = {
 export function registerPipelineTools(server, {
   corpusPath = process.env.PIPELINE_SEARCH_FILE || defaultCorpus,
   outputDir = process.env.PIPELINE_OUTPUT_DIR || path.resolve('data/exports'),
-  artifacts = new Map()
+  artifacts = new Map(), allowImport = false
 } = {}) {
   // Artifacts live for one MCP connection / user turn. IDs preserve exact data flow.
   const result = data => ({ content: [{ type: 'text', text: JSON.stringify(data) }], structuredContent: data });
@@ -37,6 +37,26 @@ export function registerPipelineTools(server, {
     if (!data.text) throw new Error('Источник пуст. Нельзя обрабатывать или сохранять пустой результат поиска.');
     return data.text;
   };
+
+  if (allowImport) {
+    // Private broker transport; omitted from the LLM catalog.
+    server.registerTool('_import_source', {
+      description: 'Internal session broker: import exact data from another MCP server.',
+      inputSchema: z.object({ sourceId: z.string(), text: z.string().max(100000), weather: z.unknown().optional() })
+    }, handler(({ sourceId, text, weather }) => {
+      if (artifacts.has(sourceId)) throw new Error('Source already exists.');
+      artifacts.set(sourceId, { text, weather });
+      return { imported: true, sourceId };
+    }));
+    server.registerTool('combine_sources', {
+      description: 'Объединяет точные тексты нескольких успешных результатов (например маршрут и погоду) в один документ. Передай sourceIds полученных результатов в нужном порядке. Возвращает новый sourceId для summarize или saveToFile. Не переписывай данные самостоятельно.',
+      inputSchema: z.object({ sourceIds: z.array(z.string()).min(2).max(10) }),
+      annotations: { readOnlyHint: true, openWorldHint: false }
+    }, handler(({ sourceIds }) => remember({
+      text: sourceIds.map(sourceId => resolveData({ sourceId })).join('\n\n'), inputSourceIds: sourceIds,
+      components: sourceIds.map(sourceId => artifacts.get(sourceId))
+    })));
+  }
 
   server.registerTool('search', {
     title: 'Поиск по базе знаний',
@@ -61,6 +81,18 @@ export function registerPipelineTools(server, {
     annotations: { readOnlyHint: true, openWorldHint: false }
   }, handler(({ sourceId, text, maxSentences }) => {
     const input = resolveData({ sourceId, text });
+    const components = sourceId && artifacts.get(sourceId)?.components;
+    if (components) {
+      // Keep one fact from each source before adding details from any one source.
+      const segments = components.map(component => component.weather
+        ? [summarizeWeather(component.weather, 1).text]
+        : [...new Intl.Segmenter('ru', { granularity: 'sentence' }).segment(component.text)].map(item => item.segment.trim()).filter(Boolean));
+      const sentences = [];
+      for (let index = 0; sentences.length < maxSentences && segments.some(items => items[index]); index++) {
+        for (const items of segments) if (items[index] && sentences.length < maxSentences) sentences.push(items[index]);
+      }
+      return remember({ text: sentences.join(' '), inputSourceId: sourceId, inputCharacters: input.length, method: 'multi-source-extractive' });
+    }
     const weather = sourceId && artifacts.get(sourceId)?.weather;
     if (weather) return remember({ ...summarizeWeather(weather, maxSentences),
       inputSourceId: sourceId, inputCharacters: input.length, method: 'weather-aggregate' });

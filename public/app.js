@@ -606,7 +606,7 @@ document.querySelector('#settingsTabButton').addEventListener('click', () => { s
 document.querySelector('#memoryTabButton').addEventListener('click', () => { sidePanel = 'memory'; renderWorkspaceMode(); renderMemory(); });
 document.querySelector('#mcpTabButton').addEventListener('click', () => { sidePanel = 'mcp'; renderWorkspaceMode(); renderMcpTrace(); });
 document.querySelector('#mcpExample').addEventListener('click', () => {
-  promptEl.value = 'Найди сведения о MCP, сделай выжимку и сохрани в mcp-summary.md';
+  promptEl.value = 'Построй автомобильный маршрут из Москвы в Тулу, узнай погоду в Туле на 3 дня, объедини маршрут и прогноз, кратко подведи итог и сохрани в trip.md';
   promptEl.dispatchEvent(new Event('input')); promptEl.focus();
 });
 
@@ -625,7 +625,9 @@ function renderMcpTrace() {
   root.replaceChildren();
   const header = document.createElement('div'); header.className = 'mcp-run-header';
   const identity = document.createElement('div');
-  const label = document.createElement('span'); label.textContent = trace.server ? `${trace.server.name} · v${trace.server.version}` : 'MCP stdio · подключение';
+  const label = document.createElement('span'); label.textContent = trace.servers?.length
+    ? trace.servers.map(server => `${server.id}: ${server.status === 'connected' ? 'подключён' : 'недоступен'}`).join(' · ')
+    : trace.server ? `${trace.server.name} · v${trace.server.version}` : 'MCP stdio · подключение';
   const tool = document.createElement('strong'); tool.textContent = trace.calls?.length
     ? trace.calls.map(call => call.name).join(' → ')
     : trace.status === 'done' ? 'Ответ без инструментов' : trace.tool?.name || 'Выбор инструмента…';
@@ -633,6 +635,11 @@ function renderMcpTrace() {
   const status = document.createElement('span'); status.className = `mcp-status ${trace.status}`;
   status.textContent = trace.status === 'done' ? 'Готово' : trace.status === 'error' ? 'Ошибка' : 'Вызов…';
   header.append(identity, status); root.append(header);
+  if (trace.transfers?.length) {
+    const details = document.createElement('details');
+    const title = document.createElement('summary'); title.textContent = 'Передача данных между серверами';
+    details.append(title, jsonBlock(trace.transfers)); root.append(details);
+  }
   if (trace.error) { const error = document.createElement('p'); error.className = 'mcp-error'; error.textContent = trace.error; root.append(error); }
   const timeline = document.createElement('ol'); timeline.className = 'mcp-timeline';
   for (const [index, step] of (trace.steps || []).entries()) {

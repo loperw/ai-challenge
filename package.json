@@ -7,7 +7,8 @@
   },
   "scripts": {
     "start": "node server.js",
-    "mcp:list": "node mcp/client.mjs",
+    "mcp:list": "node scripts/list-mcp.mjs",
+    "eval:multi-mcp": "node scripts/eval-multi-mcp.mjs",
     "eval:pipeline": "node scripts/eval-pipeline.mjs",
     "test": "node --test"
   },

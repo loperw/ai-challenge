@@ -186,7 +186,7 @@ test('HTTP chat executes an LLM-selected reminder; server restart preserves its 
       const finished = body.messages.some(message => message.role === 'tool');
       const delta = finished ? { content: 'Расписание создано' } : {
         tool_calls: [{ index: 0, id: 'reminder-call', type: 'function', function: {
-          name: 'schedule_task', arguments: JSON.stringify({ kind: 'reminder', message: 'сделать перерыв', delaySeconds: 3 })
+          name: 'schedules__schedule_task', arguments: JSON.stringify({ kind: 'reminder', message: 'сделать перерыв', delaySeconds: 3 })
         } }]
       };
       return new Response('data: ' + JSON.stringify({ choices: [{ delta, finish_reason: finished ? 'stop' : 'tool_calls' }] }) + '\\n\\ndata: [DONE]\\n\\n');

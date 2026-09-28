@@ -23,7 +23,7 @@ const store = new SQLiteStore(process.env.AGENT_DB_PATH || path.join(__dirname, 
   legacyMemoryPath: process.env.AGENT_DB_PATH ? undefined : path.join(__dirname, 'data', 'memory.json')
 });
 const memoryStore = store;
-const openToolSession = async () => (await mcpClientPromise).openMcpSession();
+const openToolSession = async () => (await import('./mcp/registry.mjs')).openMultiMcpSession();
 const agents = new AgentRegistry({ store, memoryStore, openToolSession });
 const mcpClientPromise = import('./mcp/client.mjs');
 const { ScheduleStore, startScheduler } = require('./scheduler');
@@ -147,7 +147,7 @@ async function handleChat(request, response) {
         if (!result.isError && result.structuredContent?.file) {
           response.write(`data: ${JSON.stringify({ fileCreated: result.structuredContent.file })}\n\n`);
         }
-        if (name === 'schedule_task' && !result.isError && result.structuredContent?.job?.id) {
+        if ((name === 'schedule_task' || name.endsWith('__schedule_task')) && !result.isError && result.structuredContent?.job?.id) {
           response.write(`data: ${JSON.stringify({ scheduleCreated: result.structuredContent.job.id })}\n\n`);
         }
       },

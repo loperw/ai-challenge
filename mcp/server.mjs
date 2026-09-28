@@ -6,11 +6,14 @@ import { randomUUID } from 'node:crypto';
 import { getWeather, weatherOutputSchema, weatherText } from './weather.mjs';
 import { registerSchedulerTools } from './scheduler-tools.mjs';
 import { registerPipelineTools } from './pipeline-tools.mjs';
+import { registerMapsTools } from './maps.mjs';
 
-const server = new McpServer({ name: 'open-meteo-weather', version: '1.0.0' });
+const role = process.argv[2] || 'legacy';
+if (!['legacy', 'weather', 'maps', 'documents', 'schedules'].includes(role)) throw new Error(`Unknown MCP role: ${role}`);
+const server = new McpServer({ name: role === 'legacy' ? 'open-meteo-weather' : `agent-${role}`, version: '1.0.0' });
 const artifacts = new Map();
 
-server.registerTool('get_weather', {
+if (['legacy', 'weather'].includes(role)) server.registerTool('get_weather', {
   title: 'Погода Open-Meteo',
   description: 'Получает текущую погоду и прогноз для города через Open-Meteo API. Возвращает исходные данные, полный text и sourceId. Если пользователь просит подвести итог или сделать краткую сводку, передай sourceId инструменту summarize после получения прогноза. Сам инструмент только получает данные, не выполняет суммаризацию.',
   inputSchema: z.object({
@@ -33,6 +36,7 @@ server.registerTool('get_weather', {
   }
 });
 
-registerSchedulerTools(server);
-registerPipelineTools(server, { artifacts });
+if (['legacy', 'schedules'].includes(role)) registerSchedulerTools(server);
+if (['legacy', 'documents'].includes(role)) registerPipelineTools(server, { artifacts, allowImport: role === 'documents' });
+if (role === 'maps') registerMapsTools(server);
 await server.connect(new StdioServerTransport());
