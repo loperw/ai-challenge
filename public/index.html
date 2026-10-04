@@ -169,11 +169,21 @@
         <section class="index-card"><h3 id="indexBookTitle">Книга</h3><p id="indexBookInfo"></p></section>
         <label class="field"><span>Стратегия разбиения</span><select id="indexStrategy"><option value="fixed">Фиксированный размер</option><option value="structure">По структуре</option></select></label>
         <label class="field"><span>Режим ответа агента</span><select id="indexRagMode"><option value="rag">С RAG</option><option value="plain">Без RAG</option></select></label>
-        <p id="indexModeDescription" class="memory-description"></p>
+          <p id="indexModeDescription" class="memory-description"></p>
+          <label class="field"><span>Обработка RAG</span><select id="indexRetrievalMode"><option value="baseline">Исходный RAG</option><option value="filtered">Только фильтр</option><option value="rewritten">Только query rewrite</option><option value="improved" selected>Фильтр + query rewrite</option></select></label>
+          <div class="rag-options">
+            <label class="field"><span>Top-K до фильтрации</span><input id="indexCandidateK" type="number" min="1" max="100" step="1" value="20" /></label>
+            <label class="field"><span>Top-K после фильтрации</span><input id="indexContextK" type="number" min="1" max="100" step="1" value="5" /></label>
+          </div>
+          <label class="field"><span>Порог similarity</span><input id="indexSimilarityThreshold" type="number" min="-1" max="1" step="0.01" value="0.76" /></label>
+          <p class="memory-description">Rewrite использует выбранную модель и расходует API-токены. Результаты двух запросов объединяются по рангам (RRF). Порог применяется к наибольшему сходству; similarity не является вероятностью правильного ответа.</p>
         <p class="memory-description">Режим применяется к новым вопросам обычного чата. История диалога сохраняется: для независимого ответа создайте новый чат. В режиме задач поиск по книге не используется.</p>
-        <label class="field"><span>Поиск по книге без запроса к модели чата</span><input id="indexSearchQuery" placeholder="Например: Для чего нужны data class?" /></label>
-        <button id="indexSearchButton" class="compare-button" type="button">Найти фрагменты</button>
-        <div id="indexSearchResults" aria-live="polite"></div>
+          <label class="field"><span>Поиск и сравнение по вопросу</span><input id="indexSearchQuery" placeholder="Например: Для чего нужны data class?" /></label>
+          <button id="indexSearchButton" class="compare-button" type="button">Найти фрагменты</button>
+          <button id="indexCompareButton" class="compare-button" type="button">Сравнить ответы в 4 режимах</button>
+          <p class="memory-description">Сравнение создаёт четыре независимых ответа без истории чата и расходует API-токены. Используется одна модель и одинаковые K. Поиск и rewrite кешируются между режимами.</p>
+          <div id="indexSearchResults" aria-live="polite"></div>
+          <div id="indexCompareResults" aria-live="polite"></div>
         <p id="indexStrategyDescription" class="memory-description"></p>
         <dl id="indexMetrics" class="index-metrics"></dl>
         <button id="indexRefresh" class="compare-button" type="button">Обновить информацию</button>

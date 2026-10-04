@@ -21,6 +21,7 @@ const taskPauseButton = document.querySelector('#taskPause');
 const revisePlanButton = document.querySelector('#revisePlan');
 const storageKey = 'deepseek-chat-conversations';
 const profileStorageKey = 'deepseek-active-profile';
+window.selectedRagModelSettings = () => ({ provider: selectedProvider(), model: modelEl.value });
 const profileSelectEl = document.querySelector('#profileSelect');
 const editProfileButton = document.querySelector('#editProfile');
 const profileModal = document.querySelector('#profileModal');
@@ -1006,6 +1007,7 @@ async function sendConversationMessage(text, { taskAction = false, taskActionLab
       profileId: selectedProfileId,
       message: text,
       documentStrategy: !taskAction && activeMode !== 'task' ? window.selectedDocumentStrategy() : null,
+      retrievalOptions: window.selectedRetrievalOptions(),
       taskAction,
       taskActionLabel,
       taskEvent,

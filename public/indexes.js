@@ -3,23 +3,56 @@
   const status = document.querySelector('#indexStatus');
   let data;
   const mode = document.querySelector('#indexRagMode');
+  const processing = document.querySelector('#indexRetrievalMode');
+  const fields = { candidateK: document.querySelector('#indexCandidateK'), contextK: document.querySelector('#indexContextK'), similarityThreshold: document.querySelector('#indexSimilarityThreshold') };
+  const modes = {
+    baseline: { filter: false, rewrite: false, label: 'Исходный RAG' },
+    filtered: { filter: true, rewrite: false, label: 'Только фильтр' },
+    rewritten: { filter: false, rewrite: true, label: 'Только rewrite' },
+    improved: { filter: true, rewrite: true, label: 'Фильтр + rewrite' }
+  };
+  let savedOptions = false;
+  try {
+    const saved = JSON.parse(localStorage.getItem('documentRetrievalOptions'));
+    if (saved && modes[saved.mode]) {
+      processing.value = saved.mode;
+      for (const [key, field] of Object.entries(fields)) if (Number.isFinite(saved[key])) field.value = saved[key];
+      savedOptions = true;
+    }
+  } catch {}
+  window.selectedRetrievalOptions = () => ({
+    ...Object.fromEntries(Object.entries(fields).map(([key, field]) => [key, field.value === '' ? null : Number(field.value)])),
+    filter: modes[processing.value].filter, rewrite: modes[processing.value].rewrite
+  });
   try { mode.value = localStorage.getItem('documentIndexEnabled') === 'false' ? 'plain' : 'rag'; } catch {}
   window.selectedDocumentStrategy = () => mode.value === 'rag' ? select.value : null;
   const renderMode = () => {
     document.querySelector('#indexModeDescription').textContent = mode.value === 'rag'
-      ? 'С RAG: вопрос → поиск пяти чанков → вопрос и фрагменты → LLM. Источники и страницы PDF сохраняются рядом с ответом.'
+      ? `С RAG · ${modes[processing.value].label}: поиск до ${fields.candidateK.value} кандидатов → ${modes[processing.value].filter ? 'фильтр → ' : ''}до ${fields.contextK.value} фрагментов → ответ с источниками.`
       : 'Без RAG: вопрос передаётся LLM без поиска и фрагментов книги. Доступны обычные MCP-инструменты чата.';
+    fields.similarityThreshold.disabled = mode.value === 'plain' || !modes[processing.value].filter;
+    processing.disabled = mode.value === 'plain';
+    fields.candidateK.disabled = fields.contextK.disabled = mode.value === 'plain';
   };
   renderMode();
   mode.addEventListener('change', () => {
     try { localStorage.setItem('documentIndexEnabled', String(mode.value === 'rag')); } catch {}
     renderMode();
   });
+  for (const field of [processing, ...Object.values(fields)]) field.addEventListener('change', () => {
+    savedOptions = true;
+    try { localStorage.setItem('documentRetrievalOptions', JSON.stringify({ mode: processing.value, ...window.selectedRetrievalOptions() })); } catch {}
+    renderMode();
+  });
+  fetch('/api/rag-config').then(response => response.ok ? response.json() : null).then(config => {
+    if (!config || savedOptions) return;
+    for (const [key, field] of Object.entries(fields)) field.value = config[key];
+    renderMode();
+  }).catch(() => {});
   window.renderDocumentSources = (container, result, ragMode = null) => {
     container.querySelector('.document-sources')?.remove();
     if (!result && !ragMode) return;
     const block = document.createElement('section'); block.className = 'document-sources';
-    if (result && Array.isArray(result.usedSources) && !result.usedSources.length) return;
     const heading = document.createElement('h4');
     heading.textContent = result ? `С RAG · ${result.strategy === 'fixed' ? 'Фиксированный размер' : 'По структуре'}` : ragMode === 'rag' ? 'С RAG' : 'Без RAG';
     if (!result) { block.append(heading); container.append(block); return; }
@@ -27,6 +60,32 @@
       ? 'Фрагменты, переданные модели. Ссылки открывают физические страницы PDF; сходство не гарантирует правильность ответа.'
       : 'Подходящих фрагментов не найдено. В книге не найден контекст для ответа.';
     block.append(heading, note);
+    if (result.options) {
+      const info = document.createElement('p');
+      const config = result.options;
+      info.textContent = `Фильтр: ${config.filter ? 'включён' : 'выключен'} · Rewrite: ${config.rewrite ? 'включён' : 'выключен'} · Top-K ${config.candidateK} → ${config.contextK} · порог ${config.similarityThreshold}. Кандидатов: ${result.candidateCount}; прошли порог: ${result.passedCount}; отсеяно порогом: ${result.rejectedCount}; передано: ${result.hits.length}. Порядок: ${result.ranking === 'rrf' ? 'объединение рангов RRF' : 'cosine similarity'}.`;
+      block.append(info);
+      if (result.rewrite.enabled) {
+        const rewritten = document.createElement('p');
+        rewritten.textContent = result.rewrite.status === 'failed'
+          ? `Rewrite не выполнен: ${result.rewrite.error}. Поиск выполнен по исходному вопросу.`
+          : `Исходный вопрос: ${result.query}\nЗапрос после rewrite: ${result.rewrite.query}`;
+        rewritten.className = 'rag-query'; block.append(rewritten);
+      }
+      if (Array.isArray(result.usedSources) && !result.usedSources.length && result.hits.length) {
+        const unused = document.createElement('p'); unused.textContent = 'Модель не указала подтверждающих источников для ответа.'; block.append(unused);
+      }
+      const diagnostic = document.createElement('details'); diagnostic.className = 'index-card';
+      const summary = document.createElement('summary'); summary.textContent = 'Кандидаты и причины отбора'; diagnostic.append(summary);
+      const selected = new Set(result.hits.map(hit => hit.chunk_id));
+      for (const candidate of result.candidates || []) {
+        const row = document.createElement('p');
+        const reason = config.filter && candidate.score < config.similarityThreshold ? 'ниже порога' : selected.has(candidate.chunk_id) ? 'передан модели' : 'за пределами итогового top-K';
+        row.textContent = `${candidate.section} · PDF ${candidate.page_start}–${candidate.page_end} · ${candidate.score.toFixed(3)} · ${reason}`;
+        diagnostic.append(row);
+      }
+      block.append(diagnostic);
+    }
     for (const [i, hit] of result.hits.entries()) {
       if (Array.isArray(result.usedSources) && !result.usedSources.includes(i + 1)) continue;
       const card = document.createElement('details'); card.className = 'index-card';
@@ -42,9 +101,26 @@
     const button = event.currentTarget; button.disabled = true;
     const results = document.querySelector('#indexSearchResults'); results.textContent = 'Ищем в книге…';
     try {
-      const response = await fetch('/api/document-search', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({query:document.querySelector('#indexSearchQuery').value, strategy:select.value})});
+      const response = await fetch('/api/document-search', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({query:document.querySelector('#indexSearchQuery').value, strategy:select.value, retrievalOptions:window.selectedRetrievalOptions(), settings:window.selectedRagModelSettings()})});
       const payload = await response.json(); if (!response.ok) throw new Error(payload.error);
       results.replaceChildren(); window.renderDocumentSources(results, payload);
+    } catch (error) { results.textContent = error.message; }
+    finally { button.disabled = false; }
+  });
+  document.querySelector('#indexCompareButton').addEventListener('click', async event => {
+    const button = event.currentTarget; button.disabled = true;
+    const results = document.querySelector('#indexCompareResults'); results.textContent = 'Готовим четыре независимых ответа…';
+    try {
+      const response = await fetch('/api/rag-compare', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ query: document.querySelector('#indexSearchQuery').value, strategy: select.value, retrievalOptions: window.selectedRetrievalOptions(), settings: window.selectedRagModelSettings() }) });
+      const payload = await response.json(); if (!response.ok) throw new Error(payload.error);
+      results.replaceChildren();
+      for (const value of payload.results) {
+        const card = document.createElement('section'); card.className = 'index-card';
+        const heading = document.createElement('h3'); heading.textContent = value.label;
+        const answer = document.createElement('p'); answer.className = 'rag-query'; answer.textContent = value.answer;
+        card.append(heading, answer); window.renderDocumentSources(card, value.documentSearch, 'rag'); results.append(card);
+      }
+      const note = document.createElement('p'); note.className = 'memory-description'; note.textContent = payload.note; results.append(note);
     } catch (error) { results.textContent = error.message; }
     finally { button.disabled = false; }
   });

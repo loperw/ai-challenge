@@ -1,0 +1,7 @@
+{
+  "candidateK": 20,
+  "contextK": 5,
+  "similarityThreshold": 0.76,
+  "filter": true,
+  "rewrite": true
+}

@@ -7,7 +7,8 @@ const { createTask, transitionTask, TaskStateError, allowedEvents, taskLifecycle
 
 const publicDir = path.join(__dirname, 'public');
 const { describeIndexes } = require('./document-indexes');
-const { searchBook } = require('./document-search');
+const { searchBook, defaults: ragDefaults } = require('./document-search');
+const { compareRag } = require('./rag-comparison');
 const mimeTypes = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'application/javascript; charset=utf-8' };
 
 // Loads local settings without adding a dependency. `.env` is intentionally gitignored.
@@ -141,7 +142,7 @@ async function handleChat(request, response) {
       : agents.get(body.conversationId, settings);
 
     const documentSearch = !body.ephemeral && !task && body.documentStrategy
-      ? await searchBook(body.message, body.documentStrategy) : null;
+      ? await searchBook(body.message, body.documentStrategy, body.retrievalOptions, { settings }) : null;
     await agent.respond(body.message, {
       documentSearch,
       ragMode: !body.ephemeral && !task ? (documentSearch ? 'rag' : 'plain') : null,
@@ -196,7 +197,12 @@ const server = http.createServer(async (request, response) => {
     stream.on('error', () => response.destroy()); stream.pipe(response); return;
   }
   if (request.method === 'POST' && request.url === '/api/document-search') {
-    try { const body = await readBody(request); return sendJson(response, 200, await searchBook(body.query, body.strategy)); }
+    try { const body = await readBody(request); return sendJson(response, 200, await searchBook(body.query, body.strategy, body.retrievalOptions, { settings: body.settings })); }
+    catch (error) { return sendJson(response, error.status || 500, { error: error.message }); }
+  }
+  if (request.method === 'GET' && request.url === '/api/rag-config') return sendJson(response, 200, ragDefaults);
+  if (request.method === 'POST' && request.url === '/api/rag-compare') {
+    try { const body = await readBody(request); return sendJson(response, 200, await compareRag(body.query, body.strategy, body.retrievalOptions, body.settings)); }
     catch (error) { return sendJson(response, error.status || 500, { error: error.message }); }
   }
   if (request.method === 'GET' && request.url === '/api/document-indexes') {
