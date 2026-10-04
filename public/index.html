@@ -168,8 +168,9 @@
         <p id="indexStatus" class="memory-description" role="status"></p>
         <section class="index-card"><h3 id="indexBookTitle">Книга</h3><p id="indexBookInfo"></p></section>
         <label class="field"><span>Стратегия разбиения</span><select id="indexStrategy"><option value="fixed">Фиксированный размер</option><option value="structure">По структуре</option></select></label>
-        <label class="index-use-book"><input id="indexUseBook" type="checkbox" checked /> Использовать книгу в ответах чата</label>
-        <p class="memory-description">Найденные фрагменты передаются выбранной модели чата. Под ответом появятся стратегия, разделы и страницы PDF. Выключите режим книги для обычного чата с MCP-инструментами.</p>
+        <label class="field"><span>Режим ответа агента</span><select id="indexRagMode"><option value="rag">С RAG</option><option value="plain">Без RAG</option></select></label>
+        <p id="indexModeDescription" class="memory-description"></p>
+        <p class="memory-description">Режим применяется к новым вопросам обычного чата. История диалога сохраняется: для независимого ответа создайте новый чат. В режиме задач поиск по книге не используется.</p>
         <label class="field"><span>Поиск по книге без запроса к модели чата</span><input id="indexSearchQuery" placeholder="Например: Для чего нужны data class?" /></label>
         <button id="indexSearchButton" class="compare-button" type="button">Найти фрагменты</button>
         <div id="indexSearchResults" aria-live="polite"></div>

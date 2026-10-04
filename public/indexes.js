@@ -2,19 +2,33 @@
   const select = document.querySelector('#indexStrategy');
   const status = document.querySelector('#indexStatus');
   let data;
-  const enabled = document.querySelector('#indexUseBook');
-  try { enabled.checked = localStorage.getItem('documentIndexEnabled') !== 'false'; } catch {}
-  window.selectedDocumentStrategy = () => enabled.checked ? select.value : null;
-  enabled.addEventListener('change', () => { try { localStorage.setItem('documentIndexEnabled', String(enabled.checked)); } catch {} });
-  window.renderDocumentSources = (container, result) => {
+  const mode = document.querySelector('#indexRagMode');
+  try { mode.value = localStorage.getItem('documentIndexEnabled') === 'false' ? 'plain' : 'rag'; } catch {}
+  window.selectedDocumentStrategy = () => mode.value === 'rag' ? select.value : null;
+  const renderMode = () => {
+    document.querySelector('#indexModeDescription').textContent = mode.value === 'rag'
+      ? 'С RAG: вопрос → поиск пяти чанков → вопрос и фрагменты → LLM. Источники и страницы PDF сохраняются рядом с ответом.'
+      : 'Без RAG: вопрос передаётся LLM без поиска и фрагментов книги. Доступны обычные MCP-инструменты чата.';
+  };
+  renderMode();
+  mode.addEventListener('change', () => {
+    try { localStorage.setItem('documentIndexEnabled', String(mode.value === 'rag')); } catch {}
+    renderMode();
+  });
+  window.renderDocumentSources = (container, result, ragMode = null) => {
     container.querySelector('.document-sources')?.remove();
-    if (!result) return;
+    if (!result && !ragMode) return;
     const block = document.createElement('section'); block.className = 'document-sources';
+    if (result && Array.isArray(result.usedSources) && !result.usedSources.length) return;
     const heading = document.createElement('h4');
-    heading.textContent = `Поиск по книге · ${result.strategy === 'fixed' ? 'Фиксированный размер' : 'По структуре'}`;
-    const note = document.createElement('p'); note.textContent = 'Найденные фрагменты. Ссылки открывают физические страницы PDF; сходство не гарантирует правильность ответа.';
+    heading.textContent = result ? `С RAG · ${result.strategy === 'fixed' ? 'Фиксированный размер' : 'По структуре'}` : ragMode === 'rag' ? 'С RAG' : 'Без RAG';
+    if (!result) { block.append(heading); container.append(block); return; }
+    const note = document.createElement('p'); note.textContent = result.hits.length
+      ? 'Фрагменты, переданные модели. Ссылки открывают физические страницы PDF; сходство не гарантирует правильность ответа.'
+      : 'Подходящих фрагментов не найдено. В книге не найден контекст для ответа.';
     block.append(heading, note);
     for (const [i, hit] of result.hits.entries()) {
+      if (Array.isArray(result.usedSources) && !result.usedSources.includes(i + 1)) continue;
       const card = document.createElement('details'); card.className = 'index-card';
       const title = document.createElement('summary'); title.textContent = `[${i + 1}] ${hit.section} · PDF ${hit.page_start}–${hit.page_end}`;
       const link = document.createElement('a'); link.href = `/api/document-book#page=${Number(hit.page_start)}`; link.target = '_blank'; link.rel = 'noopener'; link.textContent = `${hit.file} · открыть страницу ${hit.page_start}`;

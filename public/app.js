@@ -104,7 +104,7 @@ let tasks = [];
 let globalInvariants = chats.flatMap(chat => chat.invariants || []).filter(item => item?.scope === 'global');
 let longTermMemory = chats.find(chat => chat.memory?.longTerm)?.memory.longTerm || [];
 let profiles = [];
-let selectedProfileId = localStorage.getItem(profileStorageKey) || '';
+let selectedProfileId = '';
 let editingProfileId = '';
 let activeChatId = chats[0]?.id || createChat();
 let activeTaskId = '';
@@ -148,7 +148,7 @@ function renderProfiles() {
       const option = document.createElement('option');
       option.value = profile.id; option.textContent = profile.name; profileSelectEl.append(option);
     }
-    if (selectedProfileId && !profiles.some(profile => profile.id === selectedProfileId)) selectedProfileId = activeMode === 'task' ? '' : profiles[0].id;
+    if (selectedProfileId && !profiles.some(profile => profile.id === selectedProfileId)) selectedProfileId = '';
     profileSelectEl.value = selectedProfileId;
   }
   if (selectedProfileId) localStorage.setItem(profileStorageKey, selectedProfileId);
@@ -241,7 +241,7 @@ function renderHistory() {
     const count = document.createElement('span'); count.className = 'memory-count';
     count.textContent = String(chat.history?.length || 0); count.title = 'Сообщений в памяти';
     button.append(label, count);
-    button.addEventListener('click', () => { activeMode = 'chat'; activeChatId = chat.id; selectedProfileId = chat.profileId || selectedProfileId; renderProfiles(); renderChat(); renderHistory(); renderTaskHistory(); });
+    button.addEventListener('click', () => { activeMode = 'chat'; activeChatId = chat.id; selectedProfileId = chat.profileId || ''; renderProfiles(); renderChat(); renderHistory(); renderTaskHistory(); });
     const row = document.createElement('div');
     row.className = 'history-chat-row';
     const remove = document.createElement('button');
@@ -283,7 +283,7 @@ function renderChat() {
   renderWorkspaceMode();
   renderMcpTrace();
   messagesEl.innerHTML = '';
-  visibleMessages(chat).forEach(message => addMessage(message.role, message.content, message.pending, message.memoryCommand, message.memoryType, message.invariantRefusal, message.files, message.documentSearch));
+  visibleMessages(chat).forEach(message => addMessage(message.role, message.content, message.pending, message.memoryCommand, message.memoryType, message.invariantRefusal, message.files, message.documentSearch, message.ragMode));
   if (!visibleMessages(chat).length) {
     const empty = document.createElement('div'); empty.className = 'empty-chat'; empty.textContent = 'Чем помочь?'; messagesEl.append(empty);
   }
@@ -437,7 +437,7 @@ function setInvariantRefusalMark(item, enabled) {
   body.insertBefore(badge, body.querySelector('.bubble'));
 }
 
-function addMessage(role, content, pending = false, memoryCommand = false, memoryType = '', invariantRefusal = false, files = [], documentSearch = null) {
+function addMessage(role, content, pending = false, memoryCommand = false, memoryType = '', invariantRefusal = false, files = [], documentSearch = null, ragMode = null) {
   const item = document.createElement('article'); item.className = `message ${role}${memoryCommand ? ' memory-command' : ''}`;
   const avatar = document.createElement('div'); avatar.className = 'avatar'; avatar.textContent = role === 'assistant' ? 'A' : 'Я';
   const bubble = document.createElement('div'); bubble.className = `bubble${pending ? ' typing' : ''}`; bubble.textContent = content;
@@ -450,7 +450,7 @@ function addMessage(role, content, pending = false, memoryCommand = false, memor
     const author = document.createElement('span'); author.className = 'message-author'; author.textContent = 'Агент';
     body.append(author, bubble); item.append(avatar, body);
     renderFileCards(item, files);
-    window.renderDocumentSources(body, documentSearch);
+    window.renderDocumentSources(body, documentSearch, ragMode);
     setInvariantRefusalMark(item, Boolean(invariantRefusal));
   } else item.append(avatar, bubble);
   messagesEl.append(item); return item;
@@ -786,7 +786,7 @@ async function readStream(response, onToken, onStats = () => {}, onMcpTrace = ()
     }
   }
 }
-newChatButton.addEventListener('click', () => { activeMode = 'chat'; sidePanel = 'primary'; activeChatId = createChat(); selectedProfileId = currentChat().profileId || selectedProfileId; renderProfiles(); renderChat(); renderHistory(); renderTaskHistory(); promptEl.focus(); });
+newChatButton.addEventListener('click', () => { activeMode = 'chat'; sidePanel = 'primary'; selectedProfileId = ''; activeChatId = createChat(); renderProfiles(); renderChat(); renderHistory(); renderTaskHistory(); promptEl.focus(); });
 profileSelectEl.addEventListener('change', async () => {
   selectedProfileId = profileSelectEl.value;
   localStorage.setItem(profileStorageKey, selectedProfileId);
@@ -817,7 +817,7 @@ document.querySelector('#deleteProfile').addEventListener('click', async () => {
     const data = await response.json();
     if (!response.ok) throw new Error(data.error || 'Не удалось удалить профиль.');
     profiles = profiles.filter(item => item.id !== profile.id);
-    selectedProfileId = profiles[0]?.id || '';
+    selectedProfileId = '';
     for (const chat of chats) {
       if (chat.profileId === profile.id) chat.profileId = selectedProfileId;
     }
@@ -1026,6 +1026,7 @@ async function sendConversationMessage(text, { taskAction = false, taskActionLab
       const savedAssistantMessage = [...(messages || [])].reverse().find(message => message.role === 'assistant');
       assistantMessage.invariantRefusal = Boolean(savedAssistantMessage?.invariantRefusal);
       assistantMessage.documentSearch = savedAssistantMessage?.documentSearch || null;
+      assistantMessage.ragMode = savedAssistantMessage?.ragMode || null;
       assistantMessage.files = savedAssistantMessage?.files || assistantMessage.files || [];
     }, trace => {
       chat.mcpTrace = trace;
@@ -1036,8 +1037,8 @@ async function sendConversationMessage(text, { taskAction = false, taskActionLab
       if (!assistantMessage.files.some(item => item.name === file.name)) assistantMessage.files.push(file);
     });
     if (!answer) throw new Error('Сервис не вернул текст ответа.');
-    chat.history.push({ role: 'assistant', content: answer, invariantRefusal: assistantMessage.invariantRefusal, files: assistantMessage.files, documentSearch: assistantMessage.documentSearch });
-    chat.memory.shortTerm.push({ role: 'assistant', content: answer, invariantRefusal: assistantMessage.invariantRefusal, files: assistantMessage.files, documentSearch: assistantMessage.documentSearch });
+    chat.history.push({ role: 'assistant', content: answer, invariantRefusal: assistantMessage.invariantRefusal, files: assistantMessage.files, documentSearch: assistantMessage.documentSearch, ragMode: assistantMessage.ragMode });
+    chat.memory.shortTerm.push({ role: 'assistant', content: answer, invariantRefusal: assistantMessage.invariantRefusal, files: assistantMessage.files, documentSearch: assistantMessage.documentSearch, ragMode: assistantMessage.ragMode });
     if (settings.contextStrategy !== 'branching') {
       const recentDialogue = chat.history.filter(message => !message.memoryCommand).slice(-Number(settings.keepMessages));
       chat.history = chat.history.filter(message => message.memoryCommand || recentDialogue.includes(message));
@@ -1052,7 +1053,7 @@ async function sendConversationMessage(text, { taskAction = false, taskActionLab
       bubble.textContent = assistantMessage.content;
       bubble.classList.remove('typing');
       renderFileCards(messagesEl.lastElementChild, assistantMessage.files);
-      window.renderDocumentSources(messagesEl.lastElementChild.querySelector('.message-body'), assistantMessage.documentSearch);
+      window.renderDocumentSources(messagesEl.lastElementChild.querySelector('.message-body'), assistantMessage.documentSearch, assistantMessage.ragMode);
       setInvariantRefusalMark(messagesEl.lastElementChild, Boolean(assistantMessage.invariantRefusal));
       messagesEl.lastElementChild.classList.remove('task-action-running');
       if (follow) messagesEl.scrollTop = messagesEl.scrollHeight;
@@ -1116,10 +1117,7 @@ async function initialize() {
       memory: task.memory || { shortTerm: [], working: [], longTerm: [] },
       invariants: Array.isArray(task.invariants) ? task.invariants : []
     }));
-    const rememberedProfile = localStorage.getItem(profileStorageKey);
-    selectedProfileId = profiles.some(profile => profile.id === rememberedProfile) ? rememberedProfile
-      : profiles.some(profile => profile.id === chats[0]?.profileId) ? chats[0].profileId
-      : profiles[0]?.id || '';
+    selectedProfileId = '';
     activeChatId = chats[0]?.id || createChat();
     saveChats(); renderProfiles(); renderChat(); renderHistory(); renderTaskHistory(); sendButton.disabled = false;
   } catch (error) { addMessage('assistant', error.message + ' Перезагрузите страницу для повторной попытки.'); }

@@ -144,6 +144,7 @@ async function handleChat(request, response) {
       ? await searchBook(body.message, body.documentStrategy) : null;
     await agent.respond(body.message, {
       documentSearch,
+      ragMode: !body.ephemeral && !task ? (documentSearch ? 'rag' : 'plain') : null,
       onStart: () => startStream(response),
       onToken: token => writeToken(response, token),
       toolsEnabled: !documentSearch && !body.ephemeral && (!task || task.stage === 'execution'),
