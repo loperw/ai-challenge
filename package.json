@@ -10,6 +10,9 @@
     "mcp:list": "node scripts/list-mcp.mjs",
     "eval:multi-mcp": "node scripts/eval-multi-mcp.mjs",
     "eval:pipeline": "node scripts/eval-pipeline.mjs",
+    "index:documents": "node scripts/document-index.cjs index",
+    "search:documents": "node scripts/document-index.cjs search",
+    "compare:chunking": "node scripts/document-index.cjs compare",
     "test": "node --test"
   },
   "dependencies": {

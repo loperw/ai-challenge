@@ -6,6 +6,8 @@ const { Agent, AgentError, AgentRegistry, enforceStateTransitionInvariants } = r
 const { createTask, transitionTask, TaskStateError, allowedEvents, taskLifecycleInstructions } = require('./task-state');
 
 const publicDir = path.join(__dirname, 'public');
+const { describeIndexes } = require('./document-indexes');
+const { searchBook } = require('./document-search');
 const mimeTypes = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'application/javascript; charset=utf-8' };
 
 // Loads local settings without adding a dependency. `.env` is intentionally gitignored.
@@ -138,10 +140,13 @@ async function handleChat(request, response) {
       })
       : agents.get(body.conversationId, settings);
 
+    const documentSearch = !body.ephemeral && !task && body.documentStrategy
+      ? await searchBook(body.message, body.documentStrategy) : null;
     await agent.respond(body.message, {
+      documentSearch,
       onStart: () => startStream(response),
       onToken: token => writeToken(response, token),
-      toolsEnabled: !body.ephemeral && (!task || task.stage === 'execution'),
+      toolsEnabled: !documentSearch && !body.ephemeral && (!task || task.stage === 'execution'),
       onTrace: trace => writeMcpTrace(response, trace),
       onToolResult: (name, result) => {
         if (!result.isError && result.structuredContent?.file) {
@@ -182,6 +187,20 @@ async function handleReset(request, response) {
 }
 
 const server = http.createServer(async (request, response) => {
+  if (request.method === 'GET' && request.url === '/api/document-book') {
+    const book = describeIndexes(path.join(__dirname, 'data', 'document-index')).book;
+    if (!book || path.extname(book.source).toLowerCase() !== '.pdf' || !fs.existsSync(book.source)) return sendJson(response, 404, { error: 'Исходный PDF не найден.' });
+    response.writeHead(200, { 'Content-Type': 'application/pdf', 'Content-Length': fs.statSync(book.source).size });
+    const stream = fs.createReadStream(book.source);
+    stream.on('error', () => response.destroy()); stream.pipe(response); return;
+  }
+  if (request.method === 'POST' && request.url === '/api/document-search') {
+    try { const body = await readBody(request); return sendJson(response, 200, await searchBook(body.query, body.strategy)); }
+    catch (error) { return sendJson(response, error.status || 500, { error: error.message }); }
+  }
+  if (request.method === 'GET' && request.url === '/api/document-indexes') {
+    return sendJson(response, 200, describeIndexes(path.join(__dirname, 'data', 'document-index')));
+  }
   if (request.method === 'GET' && request.url.startsWith('/api/files/')) return serveFileArtifact(request, response);
   if (request.method === 'GET' && request.url === '/api/schedules') {
     return sendJson(response, 200, { jobs: schedules.list() });

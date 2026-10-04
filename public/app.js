@@ -283,7 +283,7 @@ function renderChat() {
   renderWorkspaceMode();
   renderMcpTrace();
   messagesEl.innerHTML = '';
-  visibleMessages(chat).forEach(message => addMessage(message.role, message.content, message.pending, message.memoryCommand, message.memoryType, message.invariantRefusal, message.files));
+  visibleMessages(chat).forEach(message => addMessage(message.role, message.content, message.pending, message.memoryCommand, message.memoryType, message.invariantRefusal, message.files, message.documentSearch));
   if (!visibleMessages(chat).length) {
     const empty = document.createElement('div'); empty.className = 'empty-chat'; empty.textContent = 'Чем помочь?'; messagesEl.append(empty);
   }
@@ -318,6 +318,9 @@ function renderWorkspaceMode() {
   document.querySelector('#memoryTab').hidden = sidePanel !== 'memory';
   document.querySelector('#mcpTab').hidden = sidePanel !== 'mcp';
   document.querySelector('#monitorTab').hidden = sidePanel !== 'monitor';
+  document.querySelector('#indexesTab').hidden = sidePanel !== 'indexes';
+  document.querySelector('#indexesTabButton').classList.toggle('active', sidePanel === 'indexes');
+  document.querySelector('#indexesTabButton').setAttribute('aria-selected', String(sidePanel === 'indexes'));
   document.querySelector('#monitorTabButton').classList.toggle('active', sidePanel === 'monitor');
   document.querySelector('#monitorTabButton').setAttribute('aria-selected', String(sidePanel === 'monitor'));
   document.querySelector('#settingsTabButton').classList.toggle('active', sidePanel === 'primary');
@@ -434,7 +437,7 @@ function setInvariantRefusalMark(item, enabled) {
   body.insertBefore(badge, body.querySelector('.bubble'));
 }
 
-function addMessage(role, content, pending = false, memoryCommand = false, memoryType = '', invariantRefusal = false, files = []) {
+function addMessage(role, content, pending = false, memoryCommand = false, memoryType = '', invariantRefusal = false, files = [], documentSearch = null) {
   const item = document.createElement('article'); item.className = `message ${role}${memoryCommand ? ' memory-command' : ''}`;
   const avatar = document.createElement('div'); avatar.className = 'avatar'; avatar.textContent = role === 'assistant' ? 'A' : 'Я';
   const bubble = document.createElement('div'); bubble.className = `bubble${pending ? ' typing' : ''}`; bubble.textContent = content;
@@ -447,6 +450,7 @@ function addMessage(role, content, pending = false, memoryCommand = false, memor
     const author = document.createElement('span'); author.className = 'message-author'; author.textContent = 'Агент';
     body.append(author, bubble); item.append(avatar, body);
     renderFileCards(item, files);
+    window.renderDocumentSources(body, documentSearch);
     setInvariantRefusalMark(item, Boolean(invariantRefusal));
   } else item.append(avatar, bubble);
   messagesEl.append(item); return item;
@@ -603,6 +607,7 @@ function renderMemory() {
   document.querySelector('.long-memory .memory-description').textContent = taskMode ? 'Знания только этой задачи' : 'Профиль и знания для всех чатов';
 }
 document.querySelector('#settingsTabButton').addEventListener('click', () => { sidePanel = 'primary'; renderWorkspaceMode(); });
+document.querySelector('#indexesTabButton').addEventListener('click', () => { sidePanel = 'indexes'; renderWorkspaceMode(); window.refreshDocumentIndexes(); });
 document.querySelector('#memoryTabButton').addEventListener('click', () => { sidePanel = 'memory'; renderWorkspaceMode(); renderMemory(); });
 document.querySelector('#mcpTabButton').addEventListener('click', () => { sidePanel = 'mcp'; renderWorkspaceMode(); renderMcpTrace(); });
 document.querySelector('#mcpExample').addEventListener('click', () => {
@@ -1000,6 +1005,7 @@ async function sendConversationMessage(text, { taskAction = false, taskActionLab
       provider: selectedProvider(),
       profileId: selectedProfileId,
       message: text,
+      documentStrategy: !taskAction && activeMode !== 'task' ? window.selectedDocumentStrategy() : null,
       taskAction,
       taskActionLabel,
       taskEvent,
@@ -1019,6 +1025,7 @@ async function sendConversationMessage(text, { taskAction = false, taskActionLab
       chat.context = context;
       const savedAssistantMessage = [...(messages || [])].reverse().find(message => message.role === 'assistant');
       assistantMessage.invariantRefusal = Boolean(savedAssistantMessage?.invariantRefusal);
+      assistantMessage.documentSearch = savedAssistantMessage?.documentSearch || null;
       assistantMessage.files = savedAssistantMessage?.files || assistantMessage.files || [];
     }, trace => {
       chat.mcpTrace = trace;
@@ -1029,8 +1036,8 @@ async function sendConversationMessage(text, { taskAction = false, taskActionLab
       if (!assistantMessage.files.some(item => item.name === file.name)) assistantMessage.files.push(file);
     });
     if (!answer) throw new Error('Сервис не вернул текст ответа.');
-    chat.history.push({ role: 'assistant', content: answer, invariantRefusal: assistantMessage.invariantRefusal, files: assistantMessage.files });
-    chat.memory.shortTerm.push({ role: 'assistant', content: answer, invariantRefusal: assistantMessage.invariantRefusal, files: assistantMessage.files });
+    chat.history.push({ role: 'assistant', content: answer, invariantRefusal: assistantMessage.invariantRefusal, files: assistantMessage.files, documentSearch: assistantMessage.documentSearch });
+    chat.memory.shortTerm.push({ role: 'assistant', content: answer, invariantRefusal: assistantMessage.invariantRefusal, files: assistantMessage.files, documentSearch: assistantMessage.documentSearch });
     if (settings.contextStrategy !== 'branching') {
       const recentDialogue = chat.history.filter(message => !message.memoryCommand).slice(-Number(settings.keepMessages));
       chat.history = chat.history.filter(message => message.memoryCommand || recentDialogue.includes(message));
@@ -1045,6 +1052,7 @@ async function sendConversationMessage(text, { taskAction = false, taskActionLab
       bubble.textContent = assistantMessage.content;
       bubble.classList.remove('typing');
       renderFileCards(messagesEl.lastElementChild, assistantMessage.files);
+      window.renderDocumentSources(messagesEl.lastElementChild.querySelector('.message-body'), assistantMessage.documentSearch);
       setInvariantRefusalMark(messagesEl.lastElementChild, Boolean(assistantMessage.invariantRefusal));
       messagesEl.lastElementChild.classList.remove('task-action-running');
       if (follow) messagesEl.scrollTop = messagesEl.scrollHeight;

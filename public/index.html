@@ -57,6 +57,7 @@
         <button id="memoryTabButton" class="side-tab" type="button" role="tab" aria-selected="false" aria-controls="memoryTab">Память агента</button>
         <button id="mcpTabButton" class="side-tab" type="button" role="tab" aria-selected="false" aria-controls="mcpTab">MCP трассировка</button>
         <button id="monitorTabButton" class="side-tab" type="button" role="tab" aria-selected="false" aria-controls="monitorTab">Мониторинг <span id="monitorCount">0</span></button>
+        <button id="indexesTabButton" class="side-tab" type="button" role="tab" aria-selected="false" aria-controls="indexesTab">Индексы</button>
       </div>
       <section id="processTab" class="side-tab-panel process-panel" role="tabpanel" aria-labelledby="settingsTabButton" hidden>
         <div class="settings-title"><span id="processStatusIcon" class="settings-icon process-icon">◇</span><div><p class="eyebrow">ЗАДАЧА</p><h2 id="processTaskName">Процесс</h2></div></div>
@@ -162,6 +163,22 @@
           <div class="mcp-empty"><strong>Вызовов пока нет</strong><span>Отправьте запрос в Agent chat. Здесь появятся решения модели, аргументы и результаты всех вызовов.</span></div>
         </div>
       </section>
+      <section id="indexesTab" class="side-tab-panel" role="tabpanel" aria-labelledby="indexesTabButton" hidden>
+        <div class="settings-title"><span class="settings-icon">▤</span><div><p class="eyebrow">ДОКУМЕНТЫ</p><h2>Индексы</h2></div></div>
+        <p id="indexStatus" class="memory-description" role="status"></p>
+        <section class="index-card"><h3 id="indexBookTitle">Книга</h3><p id="indexBookInfo"></p></section>
+        <label class="field"><span>Стратегия разбиения</span><select id="indexStrategy"><option value="fixed">Фиксированный размер</option><option value="structure">По структуре</option></select></label>
+        <label class="index-use-book"><input id="indexUseBook" type="checkbox" checked /> Использовать книгу в ответах чата</label>
+        <p class="memory-description">Найденные фрагменты передаются выбранной модели чата. Под ответом появятся стратегия, разделы и страницы PDF. Выключите режим книги для обычного чата с MCP-инструментами.</p>
+        <label class="field"><span>Поиск по книге без запроса к модели чата</span><input id="indexSearchQuery" placeholder="Например: Для чего нужны data class?" /></label>
+        <button id="indexSearchButton" class="compare-button" type="button">Найти фрагменты</button>
+        <div id="indexSearchResults" aria-live="polite"></div>
+        <p id="indexStrategyDescription" class="memory-description"></p>
+        <dl id="indexMetrics" class="index-metrics"></dl>
+        <button id="indexRefresh" class="compare-button" type="button">Обновить информацию</button>
+        <h3 class="index-samples-title">Примеры чанков и метаданные</h3>
+        <div id="indexSamples"></div>
+      </section>
     </aside>
   </main>
   <div id="comparisonModal" class="modal" hidden role="dialog" aria-modal="true" aria-labelledby="comparisonTitle">
@@ -242,6 +259,7 @@
   </dialog>
   <script src="token-counter.js"></script>
   <script src="file-preview.js"></script>
+  <script src="indexes.js"></script>
   <script src="app.js"></script>
   <script src="monitor.js"></script>
 </body>
