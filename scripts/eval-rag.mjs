@@ -96,7 +96,7 @@ try {
       report.modes[mode].cases.push({ ...item, metrics: measurements(result, item), result,
         ...(answer && { answer: answer.answer, usedSources: result.usedSources, tokenStats: answer.tokenStats, answerMs: answer.answerMs }) });
     }
-    console.log(`Контроль ${i + 1}/${fixtures.test.length}${answers ? ' + четыре ответа' : ''}`);
+    console.log(`Контроль ${i + 1}/${fixtures.test.length}${answers ? ' + два ответа' : ''}`);
     await writeFile(path.join(directory, 'report.json'), JSON.stringify(report, null, 2));
   }
   for (const value of Object.values(report.modes)) value.summary = summarize(value.cases);
@@ -107,7 +107,7 @@ try {
     const m = value.summary;
     lines.push(`| ${value.label} | ${m.hitAtK.toFixed(3)} | ${m.mrr.toFixed(3)} | ${m.pagePrecision.toFixed(3)} | ${m.emptyOnUnanswerable.toFixed(3)} | ${m.meanContext.toFixed(2)} |`);
   }
-  lines.push('', 'Пустой контекст — результат фильтра; отказ модели оценивается отдельно по тексту ответа. 32 ответа генерируются только с --answers на первых восьми вопросах.');
+  lines.push('', 'Пустой контекст — результат фильтра; отказ модели оценивается отдельно по тексту ответа. 16 ответов генерируются только с --answers на первых восьми вопросах.');
   for (const item of fixtures.test) {
     lines.push('', `## ${item.query}`, '');
     for (const value of Object.values(report.modes)) {

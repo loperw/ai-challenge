@@ -6,8 +6,6 @@ const execute = require('node:util').promisify(execFile);
 const defaults = Object.freeze(require('./rag-config.json'));
 const modes = Object.freeze({
   baseline: { filter: false, rewrite: false, label: 'Исходный RAG' },
-  filtered: { filter: true, rewrite: false, label: 'Только фильтр' },
-  rewritten: { filter: false, rewrite: true, label: 'Только rewrite' },
   improved: { filter: true, rewrite: true, label: 'Фильтр + rewrite' }
 });
 function retrievalOptions(options = {}) {

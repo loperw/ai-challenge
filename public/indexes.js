@@ -4,23 +4,23 @@
   let data;
   const mode = document.querySelector('#indexRagMode');
   const processing = document.querySelector('#indexRetrievalMode');
-  const fields = { candidateK: document.querySelector('#indexCandidateK'), contextK: document.querySelector('#indexContextK'), similarityThreshold: document.querySelector('#indexSimilarityThreshold') };
+  const limits = { candidateK: 7, contextK: 3 };
+  const fields = { similarityThreshold: document.querySelector('#indexSimilarityThreshold') };
   const modes = {
     baseline: { filter: false, rewrite: false, label: 'Исходный RAG' },
-    filtered: { filter: true, rewrite: false, label: 'Только фильтр' },
-    rewritten: { filter: false, rewrite: true, label: 'Только rewrite' },
     improved: { filter: true, rewrite: true, label: 'Фильтр + rewrite' }
   };
   let savedOptions = false;
   try {
     const saved = JSON.parse(localStorage.getItem('documentRetrievalOptions'));
-    if (saved && modes[saved.mode]) {
-      processing.value = saved.mode;
+    if (saved && typeof saved === 'object') {
+      processing.value = modes[saved.mode] ? saved.mode : 'improved';
       for (const [key, field] of Object.entries(fields)) if (Number.isFinite(saved[key])) field.value = saved[key];
       savedOptions = true;
     }
   } catch {}
   window.selectedRetrievalOptions = () => ({
+    ...limits,
     ...Object.fromEntries(Object.entries(fields).map(([key, field]) => [key, field.value === '' ? null : Number(field.value)])),
     filter: modes[processing.value].filter, rewrite: modes[processing.value].rewrite
   });
@@ -28,11 +28,10 @@
   window.selectedDocumentStrategy = () => mode.value === 'rag' ? select.value : null;
   const renderMode = () => {
     document.querySelector('#indexModeDescription').textContent = mode.value === 'rag'
-      ? `С RAG · ${modes[processing.value].label}: поиск до ${fields.candidateK.value} кандидатов → ${modes[processing.value].filter ? 'фильтр → ' : ''}до ${fields.contextK.value} фрагментов → ответ с источниками.`
+      ? `С RAG · ${modes[processing.value].label}: поиск до ${limits.candidateK} кандидатов → ${modes[processing.value].filter ? 'фильтр → ' : ''}до ${limits.contextK} фрагментов → ответ с источниками.`
       : 'Без RAG: вопрос передаётся LLM без поиска и фрагментов книги. Доступны обычные MCP-инструменты чата.';
     fields.similarityThreshold.disabled = mode.value === 'plain' || !modes[processing.value].filter;
     processing.disabled = mode.value === 'plain';
-    fields.candidateK.disabled = fields.contextK.disabled = mode.value === 'plain';
   };
   renderMode();
   mode.addEventListener('change', () => {
@@ -109,7 +108,7 @@
   });
   document.querySelector('#indexCompareButton').addEventListener('click', async event => {
     const button = event.currentTarget; button.disabled = true;
-    const results = document.querySelector('#indexCompareResults'); results.textContent = 'Готовим четыре независимых ответа…';
+    const results = document.querySelector('#indexCompareResults'); results.textContent = 'Готовим два независимых ответа…';
     try {
       const response = await fetch('/api/rag-compare', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ query: document.querySelector('#indexSearchQuery').value, strategy: select.value, retrievalOptions: window.selectedRetrievalOptions(), settings: window.selectedRagModelSettings() }) });
       const payload = await response.json(); if (!response.ok) throw new Error(payload.error);

@@ -71,8 +71,9 @@ test('comparison holds K fixed, shares rewrite and retrieval, and answers in ind
         return new Response('data: '+JSON.stringify({ choices: [{ delta: { content: 'Ответ\nRAG_SOURCES: []' } }] })+'\n\ndata: [DONE]\n\n');
       }
     });
-    assert.equal(searches, 2); assert.equal(rewrites, 1); assert.equal(requests.length, 4);
-    assert.deepEqual(result.results.map(r => r.documentSearch.hits.length), [1, 0, 1, 1]);
+    assert.equal(searches, 2); assert.equal(rewrites, 1); assert.equal(requests.length, 2);
+    assert.deepEqual(result.results.map(r => r.mode), ['baseline', 'improved']);
+    assert.deepEqual(result.results.map(r => r.documentSearch.hits.length), [1, 1]);
     assert.ok(requests.every(r => r.messages.filter(m => m.role === 'user').length === 1));
     assert.ok(result.results.every(r => r.documentSearch.options.contextK === 1));
   } finally { if (previous === undefined) delete process.env.DEEPSEEK_API_KEY; else process.env.DEEPSEEK_API_KEY = previous; }

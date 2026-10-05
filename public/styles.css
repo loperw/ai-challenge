@@ -268,7 +268,6 @@ html, body { height:100%; overflow:hidden; }
 .index-samples-title { font-size:14px; margin:24px 0 14px; }
 .index-use-book { display:flex; gap:8px; align-items:center; font-size:12px; margin:12px 0; }
 .index-use-book input { width:auto; }
-.rag-options { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
 .rag-query { white-space:pre-wrap; }
 .document-sources { margin-top:16px; padding-top:12px; border-top:1px solid var(--line); max-width:100%; }
 .document-sources h4 { font-size:13px; margin:0 0 8px; }
