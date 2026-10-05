@@ -583,8 +583,77 @@ function renderTaskHistory() {
   });
 }
 
+let taskMemoryEditor = null;
+function renderTaskMemory(chat) {
+  const view = document.querySelector('#taskMemoryView');
+  view.replaceChildren();
+  const memory = chat.context?.taskMemory || {};
+  for (const [key, title] of [['goal', 'Цель диалога'], ['clarifications', 'Уточнения'], ['constraints', 'Ограничения'], ['terms', 'Термины']]) {
+    const heading = document.createElement('h4'); heading.textContent = title;
+    const text = document.createElement('p');
+    text.style.whiteSpace = 'pre-wrap';
+    text.textContent = (Array.isArray(memory[key]) ? memory[key].join('\n') : memory[key]) || 'Пока не зафиксировано';
+    view.append(heading, text);
+  }
+  const usage = chat.context?.taskMemoryUsage;
+  if (usage) {
+    const note = document.createElement('p'); note.className = 'memory-description';
+    note.textContent = `Обновление памяти: ${usage.totalTokens != null ? usage.totalTokens : '≈' + (usage.inputEstimate + usage.outputEstimate)} токенов за последний ход.`;
+    view.append(note);
+  }
+  if (taskMemoryEditor && taskMemoryEditor.id !== chat.id) {
+    closeTaskMemoryEditor();
+  }
+}
+document.querySelector('#editTaskMemory').addEventListener('click', () => {
+  const chat = currentChat(); if (!chat) return;
+  taskMemoryEditor = { id: chat.id, version: chat.context?.taskMemoryVersion || 0 };
+  const memory = chat.context?.taskMemory || {};
+  for (const key of ['goal', 'clarifications', 'constraints', 'terms']) {
+    document.querySelector('#taskMemory' + key[0].toUpperCase() + key.slice(1)).value = Array.isArray(memory[key]) ? memory[key].join('\n') : memory[key] || '';
+  }
+  document.querySelector('#taskMemoryError').textContent = '';
+  document.querySelector('#taskMemoryDialog').showModal();
+  document.querySelector('#taskMemoryGoal').focus();
+});
+function closeTaskMemoryEditor() {
+  taskMemoryEditor = null;
+  document.querySelector('#taskMemoryDialog').close();
+}
+document.querySelector('#cancelTaskMemory').addEventListener('click', closeTaskMemoryEditor);
+document.querySelector('#closeTaskMemory').addEventListener('click', closeTaskMemoryEditor);
+document.querySelector('#taskMemoryDialog').addEventListener('close', () => { taskMemoryEditor = null; });
+document.querySelector('#taskMemoryDialog').addEventListener('click', event => {
+  if (event.target === event.currentTarget) closeTaskMemoryEditor();
+});
+document.querySelector('#taskMemoryForm').addEventListener('submit', async event => {
+  event.preventDefault();
+  const chat = currentChat(), editor = taskMemoryEditor;
+  if (!editor || editor.id !== chat?.id) return;
+  const button = event.submitter; button.disabled = true;
+  try {
+    const memory = Object.fromEntries(['goal', 'clarifications', 'constraints', 'terms'].map(key => {
+      const value = document.querySelector('#taskMemory' + key[0].toUpperCase() + key.slice(1)).value.trim();
+      return [key, key === 'goal' ? value : value.split('\n').map(line => line.trim()).filter(Boolean)];
+    }));
+    const response = await apiFetch('/api/task-memory', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ conversationId: chat.id, memory, expectedVersion: editor.version,
+        settings: { provider: selectedProvider(), model: modelEl.value } }) });
+    const data = await response.json();
+    if (!response.ok) {
+      if (data.context) chat.context = data.context;
+      throw new Error(data.error || 'Не удалось сохранить память.');
+    }
+    chat.context = data.context; saveChats();
+    if (taskMemoryEditor === editor) closeTaskMemoryEditor();
+    renderMemory();
+  } catch (error) { if (taskMemoryEditor === editor) document.querySelector('#taskMemoryError').textContent = error.message; }
+  finally { button.disabled = false; }
+});
+
 function renderMemory() {
   const chat = currentChat(); if (!chat) return;
+  renderTaskMemory(chat);
   const shortTerm = (chat.memory?.shortTerm?.length ? chat.memory.shortTerm : chat.messages).flatMap(message => {
     if (message.hidden || !message.content || message.pending) return [];
     if (activeMode === 'task' && isTaskInstructionMessage(message)) return [{ role: 'user', content: taskInstructionLabel(message), actionMessage: true }];
@@ -1132,7 +1201,7 @@ function renderContextControls() {
   document.querySelector('#branchControls').hidden = !branching;
   keepMessagesEl.disabled = branching;
   document.querySelector('#strategyHelp').textContent = {
-    sliding: 'Только последние N сообщений, включая новый запрос. Старые сообщения удаляются. Summary выключен.',
+    sliding: 'Последние N сообщений, включая новый запрос, и постоянная память задачи. Ранние сообщения исключаются из активного контекста.',
     facts: 'После каждого сообщения пользователя обновляются facts. В запрос идут facts и последние N сообщений.',
     branching: 'Получите список вариантов и нажмите «Создать ветки из вариантов ответа». Выберите тему в селекторе: у каждой ветки своя переписка.'
   }[strategyEl.value];

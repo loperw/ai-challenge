@@ -27,7 +27,8 @@ const store = new SQLiteStore(process.env.AGENT_DB_PATH || path.join(__dirname, 
 });
 const memoryStore = store;
 const openToolSession = async () => (await import('./mcp/registry.mjs')).openMultiMcpSession();
-const agents = new AgentRegistry({ store, memoryStore, openToolSession });
+const { extractTaskMemory } = require('./task-memory');
+const agents = new AgentRegistry({ store, memoryStore, openToolSession, extractTaskMemory });
 const mcpClientPromise = import('./mcp/client.mjs');
 const { ScheduleStore, startScheduler } = require('./scheduler');
 const schedules = new ScheduleStore();
@@ -141,14 +142,13 @@ async function handleChat(request, response) {
       })
       : agents.get(body.conversationId, settings);
 
-    const documentSearch = !body.ephemeral && !task && body.documentStrategy
-      ? await searchBook(body.message, body.documentStrategy, body.retrievalOptions, { settings }) : null;
+    const useDocuments = !body.ephemeral && !task && Boolean(body.documentStrategy);
     await agent.respond(body.message, {
-      documentSearch,
-      ragMode: !body.ephemeral && !task ? (documentSearch ? 'rag' : 'plain') : null,
+      retrieveDocuments: useDocuments ? (query, taskMemory) => searchBook(query, body.documentStrategy, body.retrievalOptions, { settings, taskMemory }) : null,
+      ragMode: !body.ephemeral && !task ? (useDocuments ? 'rag' : 'plain') : null,
       onStart: () => startStream(response),
       onToken: token => writeToken(response, token),
-      toolsEnabled: !documentSearch && !body.ephemeral && (!task || task.stage === 'execution'),
+      toolsEnabled: !useDocuments && !body.ephemeral && (!task || task.stage === 'execution'),
       onTrace: trace => writeMcpTrace(response, trace),
       onToolResult: (name, result) => {
         if (!result.isError && result.structuredContent?.file) {
@@ -254,7 +254,8 @@ const server = http.createServer(async (request, response) => {
         profileId: task.profileId,
         taskMode: true
       };
-      store.save(task.id, settings, [initialMessage], null, { facts: {}, turns: [] });
+      store.save(task.id, settings, [initialMessage], null, { facts: {}, turns: [],
+        taskMemory: { goal: task.description.slice(0, 2000), clarifications: [], constraints: [], terms: [] }, taskMemoryVersion: 1 });
       store.addShortTerm(task.id, [initialMessage]);
       return sendJson(response, 201, { task: { ...task, conversation: store.chats[task.id], memory: store.view(task.id), invariants: store.listInvariants(task.id) } });
     } catch (error) {
@@ -343,6 +344,19 @@ const server = http.createServer(async (request, response) => {
         ? sendJson(response, 200, { ok: true })
         : sendJson(response, 404, { error: 'Профиль не найден.' });
     } catch (error) { return sendJson(response, error.status || 500, { error: error.message || 'Не удалось удалить профиль.' }); }
+  }
+  if (request.method === 'POST' && request.url === '/api/task-memory') {
+    let memoryAgent;
+    try {
+      const body = await readBody(request);
+      if (!validConversationId(body.conversationId)) throw new AgentError('Некорректный диалог.', 400);
+      const saved = store.chats[body.conversationId];
+      const agent = agents.get(body.conversationId, saved?.settings || body.settings);
+      memoryAgent = agent;
+      agent.editTaskMemory(body.memory, body.expectedVersion);
+      return sendJson(response, 200, { context: agent.context });
+    } catch (error) { return sendJson(response, error.status || 500, { error: error.message,
+      ...(error.status === 409 && memoryAgent && { context: memoryAgent.context }) }); }
   }
   if (request.method === 'POST' && request.url === '/api/memory') {
     try {

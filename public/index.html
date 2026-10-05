@@ -121,7 +121,7 @@
         </table>
         <small>≈ — грубая оценка текста, без служебной разметки. Без ≈ — данные API. История включает запросы и ответы; вход API также включает системную инструкцию. Расход API может учитывать рассуждения модели.</small>
         <p id="tokenBehavior" class="token-behavior" role="status"></p>
-        <small>Контекст определяется выбранной стратегией. Обновление facts — отдельный вызов API вне бюджета основного ответа. Summary не используется.</small>
+        <small>Память задачи включается в контекст при любой стратегии. Её обновление и обновление facts — отдельные вызовы API вне бюджета основного ответа. Расход обновления памяти показан во вкладке «Память агента».</small>
         <details class="summary-details"><summary>Facts · <span id="summarizedCount">0</span> ключей</summary><p id="summaryText">Facts пока нет.</p></details>
         <h2 class="chart-heading">Токены по ходам</h2>
         <small>Фиолетовый — запрос и ответ, бирюзовый — создание summary. Наведите курсор или выберите столбец клавишей Tab.</small>
@@ -133,6 +133,13 @@
       <section id="memoryTab" class="side-tab-panel memory-panel" role="tabpanel" aria-labelledby="memoryTabButton" hidden>
         <div class="settings-title"><span class="settings-icon memory-icon">⌁</span><div><p class="eyebrow">КОНТЕКСТ</p><h2>Память агента</h2></div></div>
         <p class="memory-intro">Команды <code>/working</code> и <code>/long</code> сохраняют информацию без запроса к модели.</p>
+        <section class="memory-block" aria-labelledby="taskMemoryTitle">
+          <h3 id="taskMemoryTitle">Память задачи</h3>
+          <p class="memory-description">Заполняется из переписки автоматически. Обновление использует выбранную модель и API-токены. Можно исправить или удалить записи вручную.</p>
+          <div id="taskMemoryView"></div>
+          <button id="editTaskMemory" type="button" class="compare-button">Редактировать</button>
+
+        </section>
         <section class="memory-block short-memory" aria-labelledby="shortMemoryTitle">
           <header><h3 id="shortMemoryTitle">Краткосрочная</h3><span id="shortMemoryCount">0</span></header>
           <p class="memory-description">Сообщения текущего диалога</p>
@@ -172,22 +179,34 @@
           <p id="indexModeDescription" class="memory-description"></p>
           <label class="field"><span>Обработка RAG</span><select id="indexRetrievalMode"><option value="baseline">Исходный RAG</option><option value="improved" selected>Фильтр + query rewrite</option></select></label>
           <label class="field"><span>Порог similarity</span><input id="indexSimilarityThreshold" type="number" min="-1" max="1" step="0.01" value="0.76" /></label>
-          <p class="memory-description">Rewrite использует выбранную модель и расходует API-токены. Результаты двух запросов объединяются по рангам (RRF). Порог применяется к наибольшему сходству; similarity не является вероятностью правильного ответа.</p>
+          <p class="memory-description">Rewrite использует выбранную модель и расходует API-токены. Результаты двух запросов объединяются по рангам (RRF). Порог применяется к векторному поиску. Точное совпадение термина с названием раздела с учётом окончаний учитывается отдельно, даже ниже порога. Similarity не является вероятностью правильного ответа.</p>
         <p class="memory-description">Режим применяется к новым вопросам обычного чата. История диалога сохраняется: для независимого ответа создайте новый чат. В режиме задач поиск по книге не используется.</p>
-          <label class="field"><span>Поиск и сравнение по вопросу</span><input id="indexSearchQuery" placeholder="Например: Для чего нужны data class?" /></label>
-          <button id="indexSearchButton" class="compare-button" type="button">Найти фрагменты</button>
-          <button id="indexCompareButton" class="compare-button" type="button">Сравнить ответы в 2 режимах</button>
-          <p class="memory-description">Сравнение создаёт два независимых ответа без истории чата и расходует API-токены. Используется одна модель и одинаковые лимиты поиска. Поиск кешируется между режимами.</p>
-          <div id="indexSearchResults" aria-live="polite"></div>
-          <div id="indexCompareResults" aria-live="polite"></div>
         <p id="indexStrategyDescription" class="memory-description"></p>
         <dl id="indexMetrics" class="index-metrics"></dl>
         <button id="indexRefresh" class="compare-button" type="button">Обновить информацию</button>
-        <h3 class="index-samples-title">Примеры чанков и метаданные</h3>
-        <div id="indexSamples"></div>
       </section>
     </aside>
   </main>
+
+  <dialog id="taskMemoryDialog" class="task-memory-dialog" aria-labelledby="taskMemoryDialogTitle">
+    <form id="taskMemoryForm" class="modal-card profile-modal-card">
+      <div class="modal-header">
+        <div><p class="eyebrow">КОНТЕКСТ ДИАЛОГА</p><h2 id="taskMemoryDialogTitle">Редактировать память</h2></div>
+        <button id="closeTaskMemory" class="modal-close" type="button" aria-label="Закрыть редактор памяти">×</button>
+      </div>
+      <div class="profile-form-body">
+        <label class="field"><span>Цель диалога</span><textarea id="taskMemoryGoal" maxlength="2000" rows="2" placeholder="Какого результата хотите достичь?"></textarea></label>
+        <label class="field"><span>Уточнения</span><textarea id="taskMemoryClarifications" rows="3" placeholder="По одному уточнению на строку"></textarea></label>
+        <label class="field"><span>Ограничения</span><textarea id="taskMemoryConstraints" rows="3" placeholder="По одному ограничению на строку"></textarea></label>
+        <label class="field"><span>Термины и определения</span><textarea id="taskMemoryTerms" rows="3" placeholder="Термин — определение; каждый с новой строки"></textarea></label>
+        <p id="taskMemoryError" class="form-error" role="alert"></p>
+      </div>
+      <div class="profile-form-actions">
+        <button id="cancelTaskMemory" type="button" class="ghost-button">Отмена</button>
+        <button type="submit" class="primary-button">Сохранить</button>
+      </div>
+    </form>
+  </dialog>
   <div id="comparisonModal" class="modal" hidden role="dialog" aria-modal="true" aria-labelledby="comparisonTitle">
     <div class="modal-card">
       <div class="modal-header"><div><p class="eyebrow">АНАЛИЗ МОДЕЛИ</p><h2 id="comparisonTitle">Сравнение ответов</h2></div><button id="closeComparison" class="modal-close" type="button" aria-label="Закрыть">×</button></div>

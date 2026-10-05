@@ -64,8 +64,8 @@
     if (result.options) {
       const info = document.createElement('p');
       const config = result.options;
-      const eligibleCount = result.hits.filter(hit => Number.isFinite(hit.score) && hit.score >= config.similarityThreshold && hit.text?.trim()).length;
-      info.textContent = `Фильтр: ${config.filter ? 'включён' : 'выключен'} · Rewrite: ${config.rewrite ? 'включён' : 'выключен'} · Top-K ${config.candidateK} → ${config.contextK} · порог ${config.similarityThreshold}. Кандидатов: ${result.candidateCount}; оставлено фильтром: ${result.passedCount}; отсеяно фильтром: ${result.rejectedCount}; в выдаче: ${result.hits.length}; допустимо для ответа: ${eligibleCount}. Порядок: ${result.ranking === 'rrf' ? 'объединение рангов RRF' : 'cosine similarity'}.`;
+      const eligibleCount = result.hits.filter(hit => Number.isFinite(hit.score) && (hit.headingMatch || hit.score >= config.similarityThreshold) && hit.text?.trim()).length;
+      info.textContent = `Фильтр: ${config.filter ? 'включён' : 'выключен'} · Rewrite: ${config.rewrite ? 'включён' : 'выключен'} · Top-K ${config.candidateK} → ${config.contextK} · порог ${config.similarityThreshold}. Кандидатов: ${result.candidateCount}; оставлено фильтром: ${result.passedCount}; отсеяно фильтром: ${result.rejectedCount}; в выдаче: ${result.hits.length}; допустимо для ответа: ${eligibleCount}. Порядок: ${result.ranking === 'headings+rrf' ? 'совпадение раздела + векторный поиск' : result.ranking === 'rrf' ? 'объединение рангов RRF' : 'cosine similarity'}.`;
       block.append(info);
       if (result.rewrite.enabled) {
         const rewritten = document.createElement('p');
@@ -79,7 +79,7 @@
       const selected = new Set(result.hits.map(hit => hit.chunk_id));
       for (const candidate of result.candidates || []) {
         const row = document.createElement('p');
-        const reason = candidate.score < config.similarityThreshold ? 'ниже порога ответа' : selected.has(candidate.chunk_id) ? 'передан модели' : 'за пределами итогового top-K';
+        const reason = candidate.headingMatch ? `совпадение с разделом «${candidate.headingMatch}» · ${selected.has(candidate.chunk_id) ? 'передан модели' : 'за пределами итогового top-K'}` : candidate.score < config.similarityThreshold ? 'ниже векторного порога' : selected.has(candidate.chunk_id) ? 'передан модели' : 'за пределами итогового top-K';
         row.textContent = `${candidate.section} · PDF ${candidate.page_start}–${candidate.page_end} · ${candidate.score.toFixed(3)} · ${reason}`;
         diagnostic.append(row);
       }
@@ -106,33 +106,6 @@
     block.insertBefore(excerpts, note.nextSibling);
     container.append(block);
   };
-  document.querySelector('#indexSearchButton').addEventListener('click', async event => {
-    const button = event.currentTarget; button.disabled = true;
-    const results = document.querySelector('#indexSearchResults'); results.textContent = 'Ищем в книге…';
-    try {
-      const response = await fetch('/api/document-search', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({query:document.querySelector('#indexSearchQuery').value, strategy:select.value, retrievalOptions:window.selectedRetrievalOptions(), settings:window.selectedRagModelSettings()})});
-      const payload = await response.json(); if (!response.ok) throw new Error(payload.error);
-      results.replaceChildren(); window.renderDocumentSources(results, payload);
-    } catch (error) { results.textContent = error.message; }
-    finally { button.disabled = false; }
-  });
-  document.querySelector('#indexCompareButton').addEventListener('click', async event => {
-    const button = event.currentTarget; button.disabled = true;
-    const results = document.querySelector('#indexCompareResults'); results.textContent = 'Готовим два независимых ответа…';
-    try {
-      const response = await fetch('/api/rag-compare', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ query: document.querySelector('#indexSearchQuery').value, strategy: select.value, retrievalOptions: window.selectedRetrievalOptions(), settings: window.selectedRagModelSettings() }) });
-      const payload = await response.json(); if (!response.ok) throw new Error(payload.error);
-      results.replaceChildren();
-      for (const value of payload.results) {
-        const card = document.createElement('section'); card.className = 'index-card';
-        const heading = document.createElement('h3'); heading.textContent = value.label;
-        const answer = document.createElement('p'); answer.className = 'rag-query'; answer.textContent = value.answer;
-        card.append(heading, answer); window.renderDocumentSources(card, value.documentSearch, 'rag'); results.append(card);
-      }
-      const note = document.createElement('p'); note.className = 'memory-description'; note.textContent = payload.note; results.append(note);
-    } catch (error) { results.textContent = error.message; }
-    finally { button.disabled = false; }
-  });
   try { select.value = localStorage.getItem('documentIndexStrategy') === 'structure' ? 'structure' : 'fixed'; } catch {}
   const number = value => value == null ? '—' : Number(value).toLocaleString('ru-RU', { maximumFractionDigits: 2 });
   function render() {
@@ -143,8 +116,7 @@
       ? 'Текст делится на фрагменты фиксированной длины с перекрытием. Чанк может пересекать границы разделов.'
       : 'Разбиение по оглавлению и заголовкам PDF. Длинные разделы делятся на меньшие фрагменты; перекрытие остаётся внутри раздела.';
     const metrics = document.querySelector('#indexMetrics');
-    const samples = document.querySelector('#indexSamples');
-    metrics.replaceChildren(); samples.replaceChildren();
+    metrics.replaceChildren();
     if (!index?.available) { status.textContent = index?.error || 'Для выбранной стратегии индекс пока отсутствует.'; return; }
     status.textContent = 'Локальный индекс готов. Ниже показаны данные выбранной стратегии.';
     const fields = [['Чанки', number(index.chunks)], ['Размер чанка', `${number(index.size)} символов`],
@@ -157,14 +129,6 @@
       const term = document.createElement('dt'); term.textContent = label;
       const detail = document.createElement('dd'); detail.textContent = value;
       metrics.append(term, detail);
-    }
-    for (const sample of index.samples) {
-      const card = document.createElement('details'); card.className = 'index-card';
-      const summary = document.createElement('summary'); summary.textContent = `${sample.section} · стр. ${sample.page_start}–${sample.page_end}`;
-      const id = document.createElement('p'); id.className = 'index-chunk-id'; id.textContent = `chunk_id: ${sample.chunk_id}`;
-      const source = document.createElement('p'); source.className = 'index-chunk-id'; source.textContent = `source: ${sample.source}`;
-      const text = document.createElement('p'); text.textContent = sample.text;
-      card.append(summary, id, source, text); samples.append(card);
     }
   }
   window.refreshDocumentIndexes = async () => {

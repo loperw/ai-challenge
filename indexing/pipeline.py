@@ -15,6 +15,7 @@ import urllib.request
 
 import numpy as np
 from pypdf import PdfReader
+from heading_search import heading_candidates
 
 
 def clean(text):
@@ -200,7 +201,7 @@ def load_index(path):
     return metadata, items, vectors
 
 
-def search(path, query, embedder, top=5):
+def search(path, query, embedder, top=5, headings=True):
     metadata, items, vectors = load_index(path)
     if metadata['model_digest'] != embedder.digest or metadata['model'] != embedder.model:
         raise ValueError('Модель поиска отличается от модели индекса. Перестройте индекс.')
@@ -208,7 +209,9 @@ def search(path, query, embedder, top=5):
     if vector.shape[0] != vectors.shape[1]:
         raise ValueError('Размерность запроса отличается от индекса')
     scores = vectors @ vector
-    return [dict(items[int(i)], score=float(scores[i])) for i in np.argsort(-scores)[:top]]
+    lexical = heading_candidates(items, query, min(3, top)) if headings else {}
+    ordered = list(lexical) + [int(i) for i in np.argsort(-scores) if int(i) not in lexical]
+    return [dict(items[i], score=float(scores[i]), **({'headingMatch': lexical[i], 'headingRank': list(lexical).index(i)} if i in lexical else {})) for i in ordered[:top]]
 
 
 def write_json(path, value):
@@ -355,6 +358,7 @@ def main():
     command.add_argument('database')
     command.add_argument('query')
     command.add_argument('--top', type=int, default=5)
+    command.add_argument('--vector-only', action='store_true', help='Disable exact normalized section-title matching')
     command = sub.add_parser('compare')
     command.add_argument('--output', default='data/document-index')
     command.add_argument('--queries', default='indexing/kotlin-queries.json')
@@ -374,7 +378,7 @@ def main():
         elif args.command == 'compare':
             compare(args)
         else:
-            print(json.dumps(search(args.database, args.query, Ollama(args.url, args.model), args.top), ensure_ascii=False, indent=2))
+            print(json.dumps(search(args.database, args.query, Ollama(args.url, args.model), args.top, not args.vector_only), ensure_ascii=False, indent=2))
     except (ValueError, RuntimeError, OSError) as error:
         parser.exit(1, f'{error}\n')
 

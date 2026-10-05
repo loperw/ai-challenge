@@ -4,7 +4,7 @@ const ANSWER_CONTRACT = 'Верни только JSON-объект {"status":"an
 
 function eligibleSources(result) {
   const threshold = result.options?.similarityThreshold ?? defaults.similarityThreshold;
-  return result.hits.flatMap((hit, index) => Number.isFinite(hit.score) && hit.score >= threshold && typeof hit.text === 'string' && hit.text.trim()
+  return result.hits.flatMap((hit, index) => Number.isFinite(hit.score) && (hit.headingMatch || hit.score >= threshold) && typeof hit.text === 'string' && hit.text.trim()
     ? [index + 1] : []);
 }
 

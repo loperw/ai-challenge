@@ -182,6 +182,10 @@ test('HTTP chat executes an LLM-selected reminder; server restart preserves its 
     globalThis.fetch = async (url, init) => {
       if (url !== 'https://api.deepseek.com/chat/completions') return originalFetch(url, init);
       const body = JSON.parse(init.body);
+      if (body.messages[0]?.content.includes('Обнови структурированную память')) {
+        const memory = { goal: 'Напомнить сделать перерыв', clarifications: [], constraints: [], terms: [] };
+        return new Response('data: ' + JSON.stringify({ choices: [{ delta: { content: JSON.stringify(memory) }, finish_reason: 'stop' }] }) + '\\n\\ndata: [DONE]\\n\\n');
+      }
       require('node:assert/strict').equal(body.tool_choice, 'auto');
       const finished = body.messages.some(message => message.role === 'tool');
       const delta = finished ? { content: 'Расписание создано' } : {
@@ -241,6 +245,15 @@ test('HTTP chat executes an LLM-selected reminder; server restart preserves its 
   assert.equal(result.runs[0].result.message, 'сделать перерыв');
   const chats = await (await fetch(`${url}/api/chats`)).json();
   assert.ok(chats.chats.some(chat => chat.id === 'schedule-test'));
+  const remembered = chats.chats.find(chat => chat.id === 'schedule-test');
+  assert.equal(remembered.context.taskMemory.goal, 'Напомнить сделать перерыв');
+  const edited = { goal: 'Новая цель', clarifications: ['Уточнение'], constraints: [], terms: [] };
+  const edit = memory => fetch(`${url}/api/task-memory`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ conversationId: 'schedule-test', expectedVersion: remembered.context.taskMemoryVersion, memory }) });
+  const savedMemory = await edit(edited);
+  assert.equal(savedMemory.status, 200);
+  assert.deepEqual((await savedMemory.json()).context.taskMemory, edited);
+  assert.equal((await edit(edited)).status, 409);
   const scheduleStore = new ScheduleStore(path.join(dir, 'schedule.sqlite'));
   const other = scheduleStore.create({ kind: 'reminder', message: 'Other reminder', delaySeconds: 3600 });
   scheduleStore.close();

@@ -76,6 +76,13 @@ test('missing citation metadata does not trigger repair or an unknown response',
   assert.deepEqual(agent.messages.at(-1).documentSearch.usedSources,[]);
 });
 
+test('missing source metadata is recovered only from valid inline references, without inventing quotes', async () => {
+  const { agent } = mockAgent({ initial: { status: 'answered', answer: 'Классы данных [1, 2]. Ошибочная ссылка [99].', sources: [] } });
+  await agent.respond('Вопрос', { documentSearch: context([hit(), hit(.1)]) });
+  assert.deepEqual(agent.messages.at(-1).documentSearch.usedSources, [1]);
+  assert.deepEqual(agent.messages.at(-1).documentSearch.quotes, []);
+});
+
 test('unknown source numbers do not crash rendering or cause a refusal', async () => {
   for (const jsonMode of [false,true]) {
     const {agent} = mockAgent({settings:{jsonMode},initial:draft({answer:'Ответ [99].',sources:[99],quotes:[{source:99,text:'Quote supplied by model.'}]})});

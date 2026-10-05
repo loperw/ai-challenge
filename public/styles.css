@@ -276,3 +276,13 @@ html, body { height:100%; overflow:hidden; }
 .rag-quote { margin:12px 0; padding:8px 12px; border-left:3px solid var(--accent); overflow-wrap:anywhere; }
 .rag-quote p { margin:0; white-space:pre-wrap; font-size:13px; line-height:1.6; }
 .rag-quote a { margin-top:6px; }
+#taskMemoryView h4 { margin:12px 0 4px; font-size:11px; font-weight:600; }
+#taskMemoryView p { margin:0 0 9px; font-size:11px; line-height:1.5; overflow-wrap:anywhere; }
+#taskMemoryView .memory-description { font-size:10px; }
+.task-memory-dialog { width:min(570px,calc(100vw - 32px)); max-height:calc(100dvh - 32px); padding:0; border:0; border-radius:18px; color:var(--ink); background:#fff; box-shadow:0 24px 80px #18202b44; }
+.task-memory-dialog::backdrop { background:#18202b66; backdrop-filter:blur(2px); }
+.task-memory-dialog .modal-card { width:100%; max-height:calc(100dvh - 32px); }
+.task-memory-dialog .modal-header h2 { font-size:18px; }
+.task-memory-dialog .profile-form-body { min-height:0; }
+.task-memory-dialog .field > span { font-size:12px; }
+.task-memory-dialog .profile-form-body textarea { min-height:58px; font-size:12px; }

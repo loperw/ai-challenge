@@ -4,6 +4,16 @@ const { searchBook, retrievalOptions, selectCandidates, rewriteQuery } = require
 const { compareRag } = require('../rag-comparison');
 const hit = (chunk_id, score, text = chunk_id) => ({ chunk_id, score, text, file: 'book.pdf', section: 'Test', page_start: 1, page_end: 1 });
 
+test('title matches survive fusion and vector threshold without falsifying cosine scores', () => {
+  const opening = { ...hit('definition', .717, 'Классы данных — это структуры данных.'), headingMatch: 'Классы данных', headingRank: 0 };
+  const result = selectCandidates([{ query: 'original', hits: [opening, hit('unrelated', .95)] },
+    { query: 'rewrite', hits: [hit('unrelated', .98), hit('definition', .65)] }], retrievalOptions({ contextK: 1 }));
+  assert.equal(result.hits[0].chunk_id, 'definition');
+  assert.equal(result.hits[0].score, .717);
+  const { eligibleSources } = require('../rag-answer');
+  assert.deepEqual(eligibleSources({ ...result, options: retrievalOptions() }), [1]);
+});
+
 test('filter includes the boundary, distinguishes threshold rejection and K trimming, and allows empty context', () => {
   const config = retrievalOptions({ candidateK: 4, contextK: 2, similarityThreshold: 0.5 });
   const groups = [{ query: 'original', hits: [hit('a', .9), hit('b', .8), hit('c', .5), hit('d', .49)] }];
