@@ -36,10 +36,10 @@ Similarity — оценка близости векторов, а не веро�
 после изменения файла перезапустите сервер. Настройки интерфейса сохраняются в
 localStorage и имеют приоритет над начальными настройками сервера для режима
 и порога. Старые сохранённые значения Top-K игнорируются: интерфейс использует
-фиксированные лимиты 7 → 3 и не содержит полей для их ввода.
+фиксированные лимиты 10 → 5 и не содержит полей для их ввода.
 
-* `candidateK`: от 1 до 100 через API, по умолчанию 7.
-* `contextK`: от 1 до `candidateK` через API, по умолчанию 3.
+* `candidateK`: от 1 до 100 через API, по умолчанию 10.
+* `contextK`: от 1 до `candidateK` через API, по умолчанию 5.
 * `similarityThreshold`: от −1 до 1, включительно; равенство порогу проходит фильтр.
 * `filter`, `rewrite`: независимые boolean-переключатели.
 
@@ -111,7 +111,7 @@ npm run eval:rag -- --answers --resume data/evals/rag-<timestamp>/report.json
 В `POST /api/chat` параметры передаются как `retrievalOptions` рядом с
 `documentStrategy`; для rewrite используется выбранная модель основного чата.
 
-Пример параметров: `{candidateK:7, contextK:3, similarityThreshold:0.76,
+Пример параметров: `{candidateK:10, contextK:5, similarityThreshold:0.76,
 filter:true, rewrite:true}`. Отсутствие `retrievalOptions` использует настройки
 из `rag-config.json`. CLI `pipeline.py search --top 5` сохраняет исходный поиск
 без фильтра/rewrite для совместимости.

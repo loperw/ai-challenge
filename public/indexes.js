@@ -4,7 +4,7 @@
   let data;
   const mode = document.querySelector('#indexRagMode');
   const processing = document.querySelector('#indexRetrievalMode');
-  const limits = { candidateK: 7, contextK: 3 };
+  const limits = { candidateK: 10, contextK: 5 };
   const fields = { similarityThreshold: document.querySelector('#indexSimilarityThreshold') };
   const modes = {
     baseline: { filter: false, rewrite: false, label: 'Исходный RAG' },

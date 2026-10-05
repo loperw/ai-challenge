@@ -1,6 +1,6 @@
 {
-  "candidateK": 7,
-  "contextK": 3,
+  "candidateK": 10,
+  "contextK": 5,
   "similarityThreshold": 0.76,
   "filter": true,
   "rewrite": true
