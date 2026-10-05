@@ -6,6 +6,7 @@ const os = require('node:os');
 const { Agent } = require('../agent');
 const { SQLiteStore } = require('../sqlite-store');
 const { searchBook, documentPrompt } = require('../document-search');
+const evidence = { status:'answered', answer:'Классы данных хранят данные [1].', sources:[1], quotes:[{source:1,text:'Data classes store data.'}] };
 
 test('empty retrieval instructs the model to report missing context', () => {
   assert.match(documentPrompt({hits:[]}), /Подходящих фрагментов не найдено/);
@@ -24,19 +25,22 @@ test('retrieval context reaches the model, sources persist, and next turn clears
       persist:(...args)=>store.save('rag',...args),
       fetchImpl:async (url, options)=> {
         requests.push(JSON.parse(options.body));
-        return new Response('data: '+JSON.stringify({choices:[{delta:{content:'Ответ [1], PDF 34.\nRAG_SOURCES: [1]'}}]})+'\n\ndata: [DONE]\n\n');
+        const response = JSON.stringify(evidence);
+        return new Response('data: '+JSON.stringify({choices:[{delta:{content:response}}]})+'\n\ndata: [DONE]\n\n');
       }
     });
     await agent.respond('data class', {documentSearch:result,ragMode:'rag',toolsEnabled:false});
     assert.match(requests[0].messages.at(-1).content,/Data classes store data/);
     assert.deepEqual(agent.messages.at(-1).documentSearch.hits,result.hits);
     assert.deepEqual(agent.messages.at(-1).documentSearch.usedSources,[1]);
+    assert.deepEqual(agent.messages.at(-1).documentSearch.quotes,evidence.quotes);
     assert.equal(agent.documentSearch,null);
     store.database.close(); store = new SQLiteStore(file);
     assert.deepEqual(store.chats.rag.messages.at(-1).documentSearch.hits,result.hits);
+    assert.deepEqual(store.chats.rag.messages.at(-1).documentSearch.quotes,evidence.quotes);
     assert.equal(store.chats.rag.messages.at(-1).ragMode,'rag');
     await agent.respond('Обычный вопрос',{ragMode:'plain',toolsEnabled:false});
-    assert.ok(!requests[1].messages.some(message=>message.role==='system' && message.content.includes('Data classes store data')));
+    assert.ok(!requests.at(-1).messages.some(message=>message.role==='system' && message.content.includes('Data classes store data')));
     assert.equal(agent.messages.at(-1).documentSearch,undefined);
     assert.equal(agent.messages.at(-1).ragMode,'plain');
     assert.equal(store.chats.rag.messages.at(-1).ragMode,'plain');
@@ -58,12 +62,15 @@ for (const sources of [[], [2]]) {
     const previousKey = process.env.DEEPSEEK_API_KEY; process.env.DEEPSEEK_API_KEY = 'test-key';
     let calls = 0; let visible = '';
     try {
-      const agent = new Agent({provider:'deepseek',model:'deepseek-flash'}, {fetchImpl:async () => {
+      const agent = new Agent({provider:'deepseek',model:'deepseek-flash'}, {fetchImpl:async (url, options) => {
         calls++;
-        return new Response('data: '+JSON.stringify({choices:[{delta:{content:'Ответ\nRAG_SOURCES: '+JSON.stringify(sources)}}]})+'\n\ndata: [DONE]\n\n');
+        const response = sources.length ? {status:'answered',answer:'Второй факт [2].',sources,quotes:[{source:2,text:'Second fact exists.'}]}
+            : {status:'unknown',answer:'Не знаю. Уточните вопрос.',sources:[],quotes:[]};
+        return new Response('data: '+JSON.stringify({choices:[{delta:{content:JSON.stringify(response)}}]})+'\n\ndata: [DONE]\n\n');
       }});
-      assert.equal(await agent.respond('Вопрос', {documentSearch:{hits:[{text:'a'},{text:'b'}]},toolsEnabled:false,onToken:t=>visible+=t}), 'Ответ');
-      assert.equal(visible,'Ответ'); assert.equal(calls,1);
+      const answer = await agent.respond('Вопрос', {documentSearch:{hits:[{text:'First fact exists.',score:.9},{text:'Second fact exists.',score:.9}]},toolsEnabled:false,onToken:t=>visible+=t});
+      assert.match(answer,sources.length ? /Второй факт \[2\]/ : /Не знаю.*Уточните/s);
+      assert.equal(visible,answer); assert.equal(calls,1);
       assert.deepEqual(agent.messages.at(-1).documentSearch.usedSources,sources);
     } finally { if(previousKey===undefined)delete process.env.DEEPSEEK_API_KEY;else process.env.DEEPSEEK_API_KEY=previousKey; }
   });

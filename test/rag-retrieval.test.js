@@ -68,10 +68,11 @@ test('comparison holds K fixed, shares rewrite and retrieval, and answers in ind
       rewrite: async () => { rewrites++; return { query: 'rewritten' }; },
       fetchImpl: async (url, init) => {
         requests.push(JSON.parse(init.body));
-        return new Response('data: '+JSON.stringify({ choices: [{ delta: { content: 'Ответ\nRAG_SOURCES: []' } }] })+'\n\ndata: [DONE]\n\n');
+        return new Response('data: '+JSON.stringify({ choices: [{ delta: { content: JSON.stringify({status:'unknown',answer:'Не знаю. Уточните вопрос.',sources:[],quotes:[]}) } }] })+'\n\ndata: [DONE]\n\n');
       }
     });
-    assert.equal(searches, 2); assert.equal(rewrites, 1); assert.equal(requests.length, 2);
+    assert.equal(searches, 2); assert.equal(rewrites, 1); assert.equal(requests.length, 1);
+    assert.equal(result.results[0].documentSearch.refusalReason, 'low_relevance');
     assert.deepEqual(result.results.map(r => r.mode), ['baseline', 'improved']);
     assert.deepEqual(result.results.map(r => r.documentSearch.hits.length), [1, 1]);
     assert.ok(requests.every(r => r.messages.filter(m => m.role === 'user').length === 1));

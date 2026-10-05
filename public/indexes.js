@@ -30,7 +30,7 @@
     document.querySelector('#indexModeDescription').textContent = mode.value === 'rag'
       ? `С RAG · ${modes[processing.value].label}: поиск до ${limits.candidateK} кандидатов → ${modes[processing.value].filter ? 'фильтр → ' : ''}до ${limits.contextK} фрагментов → ответ с источниками.`
       : 'Без RAG: вопрос передаётся LLM без поиска и фрагментов книги. Доступны обычные MCP-инструменты чата.';
-    fields.similarityThreshold.disabled = mode.value === 'plain' || !modes[processing.value].filter;
+    fields.similarityThreshold.disabled = mode.value === 'plain';
     processing.disabled = mode.value === 'plain';
   };
   renderMode();
@@ -55,14 +55,17 @@
     const heading = document.createElement('h4');
     heading.textContent = result ? `С RAG · ${result.strategy === 'fixed' ? 'Фиксированный размер' : 'По структуре'}` : ragMode === 'rag' ? 'С RAG' : 'Без RAG';
     if (!result) { block.append(heading); container.append(block); return; }
-    const note = document.createElement('p'); note.textContent = result.hits.length
-      ? 'Фрагменты, переданные модели. Ссылки открывают физические страницы PDF; сходство не гарантирует правильность ответа.'
+    const note = document.createElement('p'); note.textContent = result.answerStatus === 'unknown'
+      ? 'Не знаю. Подтверждающего контекста недостаточно; уточните вопрос.'
+      : result.answerStatus === 'answered' ? 'Источники ответа и цитаты.' : result.hits.length
+      ? 'Найденные фрагменты. Ссылки открывают физические страницы PDF; сходство не гарантирует правильность ответа.'
       : 'Подходящих фрагментов не найдено. В книге не найден контекст для ответа.';
     block.append(heading, note);
     if (result.options) {
       const info = document.createElement('p');
       const config = result.options;
-      info.textContent = `Фильтр: ${config.filter ? 'включён' : 'выключен'} · Rewrite: ${config.rewrite ? 'включён' : 'выключен'} · Top-K ${config.candidateK} → ${config.contextK} · порог ${config.similarityThreshold}. Кандидатов: ${result.candidateCount}; прошли порог: ${result.passedCount}; отсеяно порогом: ${result.rejectedCount}; передано: ${result.hits.length}. Порядок: ${result.ranking === 'rrf' ? 'объединение рангов RRF' : 'cosine similarity'}.`;
+      const eligibleCount = result.hits.filter(hit => Number.isFinite(hit.score) && hit.score >= config.similarityThreshold && hit.text?.trim()).length;
+      info.textContent = `Фильтр: ${config.filter ? 'включён' : 'выключен'} · Rewrite: ${config.rewrite ? 'включён' : 'выключен'} · Top-K ${config.candidateK} → ${config.contextK} · порог ${config.similarityThreshold}. Кандидатов: ${result.candidateCount}; оставлено фильтром: ${result.passedCount}; отсеяно фильтром: ${result.rejectedCount}; в выдаче: ${result.hits.length}; допустимо для ответа: ${eligibleCount}. Порядок: ${result.ranking === 'rrf' ? 'объединение рангов RRF' : 'cosine similarity'}.`;
       block.append(info);
       if (result.rewrite.enabled) {
         const rewritten = document.createElement('p');
@@ -71,22 +74,28 @@
           : `Исходный вопрос: ${result.query}\nЗапрос после rewrite: ${result.rewrite.query}`;
         rewritten.className = 'rag-query'; block.append(rewritten);
       }
-      if (Array.isArray(result.usedSources) && !result.usedSources.length && result.hits.length) {
-        const unused = document.createElement('p'); unused.textContent = 'Модель не указала подтверждающих источников для ответа.'; block.append(unused);
-      }
       const diagnostic = document.createElement('details'); diagnostic.className = 'index-card';
       const summary = document.createElement('summary'); summary.textContent = 'Кандидаты и причины отбора'; diagnostic.append(summary);
       const selected = new Set(result.hits.map(hit => hit.chunk_id));
       for (const candidate of result.candidates || []) {
         const row = document.createElement('p');
-        const reason = config.filter && candidate.score < config.similarityThreshold ? 'ниже порога' : selected.has(candidate.chunk_id) ? 'передан модели' : 'за пределами итогового top-K';
+        const reason = candidate.score < config.similarityThreshold ? 'ниже порога ответа' : selected.has(candidate.chunk_id) ? 'передан модели' : 'за пределами итогового top-K';
         row.textContent = `${candidate.section} · PDF ${candidate.page_start}–${candidate.page_end} · ${candidate.score.toFixed(3)} · ${reason}`;
         diagnostic.append(row);
       }
       block.append(diagnostic);
     }
+    const excerpts = document.createDocumentFragment();
     for (const [i, hit] of result.hits.entries()) {
       if (Array.isArray(result.usedSources) && !result.usedSources.includes(i + 1)) continue;
+      for (const quote of result.quotes || []) {
+        if (quote.source !== i + 1) continue;
+        const excerpt = document.createElement('blockquote'); excerpt.className = 'rag-quote';
+        const text = document.createElement('p'); text.textContent = quote.text;
+        const source = document.createElement('a'); source.href = `/api/document-book#page=${Number(hit.page_start)}`;
+        source.target = '_blank'; source.rel = 'noopener'; source.textContent = `[${i + 1}] ${hit.file} · PDF ${hit.page_start}–${hit.page_end}`;
+        excerpt.append(text, source); excerpts.append(excerpt);
+      }
       const card = document.createElement('details'); card.className = 'index-card';
       const title = document.createElement('summary'); title.textContent = `[${i + 1}] ${hit.section} · PDF ${hit.page_start}–${hit.page_end}`;
       const link = document.createElement('a'); link.href = `/api/document-book#page=${Number(hit.page_start)}`; link.target = '_blank'; link.rel = 'noopener'; link.textContent = `${hit.file} · открыть страницу ${hit.page_start}`;
@@ -94,6 +103,7 @@
       const text = document.createElement('p'); text.textContent = hit.text;
       card.append(title, link, metadata, text); block.append(card);
     }
+    block.insertBefore(excerpts, note.nextSibling);
     container.append(block);
   };
   document.querySelector('#indexSearchButton').addEventListener('click', async event => {

@@ -15,11 +15,15 @@ try {
 const settings = { provider: process.env.EVAL_PROVIDER || 'deepseek', model: process.env.EVAL_MODEL || 'deepseek-flash' };
 const strategy = process.env.EVAL_STRATEGY || 'structure';
 const fixtures = JSON.parse(await readFile(path.join(root, 'indexing/rag-queries.json'), 'utf8'));
-const codeHash = createHash('sha256').update(await readFile(path.join(root, 'document-search.js'))).update(await readFile(path.join(root, 'rag-comparison.js'))).update(JSON.stringify(fixtures)).digest('hex');
+const codeHash = createHash('sha256');
+for (const file of ['document-search.js', 'rag-answer.js', 'agent.js', 'rag-comparison.js', 'scripts/eval-rag.mjs']) codeHash.update(await readFile(path.join(root, file)));
+const implementationHash = codeHash.update(JSON.stringify(fixtures)).digest('hex');
+const skipCalibration = process.argv.includes('--skip-calibration');
+if (skipCalibration && process.argv.includes('--calibrate')) throw new Error('--skip-calibration нельзя использовать с --calibrate.');
 const indexHash = createHash('sha256').update(await readFile(path.join(root, `data/document-index/${strategy}.sqlite`))).digest('hex');
 const resumePosition = process.argv.indexOf('--resume');
 const resumed = resumePosition >= 0 ? JSON.parse(await readFile(process.argv[resumePosition + 1], 'utf8')) : null;
-if (resumed && (resumed.codeHash !== codeHash || resumed.indexHash !== indexHash || resumed.strategy !== strategy || JSON.stringify(resumed.settings) !== JSON.stringify(settings) || resumed.options.candidateK !== defaults.candidateK || resumed.options.contextK !== defaults.contextK)) throw new Error('Код, индекс или параметры сохранённой калибровки отличаются от текущих.');
+if (resumed && (resumed.codeHash !== implementationHash || resumed.indexHash !== indexHash || resumed.strategy !== strategy || JSON.stringify(resumed.settings) !== JSON.stringify(settings) || resumed.options.candidateK !== defaults.candidateK || resumed.options.contextK !== defaults.contextK)) throw new Error('Код, индекс или параметры сохранённой калибровки отличаются от текущих.');
 const directory = path.join(root, 'data/evals', `rag-${new Date().toISOString().replace(/[:.]/g, '-')}`);
 await mkdir(directory, { recursive: true });
 const cache = new Map();
@@ -52,7 +56,22 @@ function summarize(results) {
     pagePrecision: mean(positive, r => r.metrics.precision), emptyOnUnanswerable: mean(negative, r => Number(r.metrics.empty)),
     meanContext: mean(results, r => r.metrics.contextCount), irrelevantContextOnUnanswerable: mean(negative, r => r.metrics.irrelevantContext) };
 }
-const report = { createdAt: new Date().toISOString(), codeHash, indexHash, strategy, settings, options: { ...defaults },
+function answerChecks(answer, result) {
+  const answered = result.answerStatus === 'answered';
+  return { status: result.answerStatus,
+    sourcesPresent: answered ? result.usedSources?.length > 0 : null,
+    quotesPresent: answered ? result.quotes?.length > 0 : null,
+    refusalClarifies: answered ? null : /^Не знаю\./.test(answer) && /Уточните/.test(answer), reason: result.refusalReason };
+}
+function summarizeAnswers(rows) {
+  const generated = rows.filter(row => row.answerChecks);
+  const answers = generated.filter(row => row.answerChecks.status === 'answered');
+  return { generated: generated.length, answered: answers.length, refused: generated.length - answers.length,
+    missingSources: answers.filter(row => !row.answerChecks.sourcesPresent).length,
+    missingQuotes: answers.filter(row => !row.answerChecks.quotesPresent).length,
+    refusalsWithoutClarification: generated.filter(row => row.answerChecks.status === 'unknown' && !row.answerChecks.refusalClarifies).length };
+}
+const report = { createdAt: new Date().toISOString(), codeHash: implementationHash, indexHash, strategy, settings, options: { ...defaults },
   note: 'Малая выборка с приблизительной разметкой страниц. Test содержит другие формулировки знакомых тем, а не независимый корпус. Сходство не доказывает наличие ответа. Поиск/rewrite кешируются; времена с кешем не сравнивают скорость режимов. Корректность содержания ответов требует проверки человеком.', calibration: [], modes: {} };
 try {
   const calibration = resumed?.calibrationCases || [];
@@ -61,14 +80,14 @@ try {
     for (const value of calibration) rewrites.set(value.item.query, Promise.resolve({ query: value.rewritten.rewrite.query, tokenStats: value.rewritten.rewrite.tokenStats }));
     console.log(`Используем ${calibration.length} ранее полученных калибровочных примеров.`);
   }
-  for (const [i, item] of (calibration.length ? [] : fixtures.calibration).entries()) {
+  for (const [i, item] of (calibration.length || skipCalibration ? [] : fixtures.calibration).entries()) {
     const original = await searchBook(item.query, strategy, { ...defaults, filter: false, rewrite: false }, dependencies);
     const rewritten = await searchBook(item.query, strategy, { ...defaults, filter: false, rewrite: true }, dependencies);
     if (rewritten.rewrite.status === 'failed') throw new Error(`Calibration rewrite failed: ${rewritten.rewrite.error}`);
     calibration.push({ item, original, rewritten });
     console.log(`Калибровка ${i + 1}/${fixtures.calibration.length}`);
   }
-  for (let hundredths = 20; hundredths <= 85; hundredths++) {
+  for (let hundredths = 20; calibration.length && hundredths <= 85; hundredths++) {
     const threshold = hundredths / 100;
     const values = [];
     for (const group of calibration) for (const result of [group.original, group.rewritten]) {
@@ -79,27 +98,32 @@ try {
     report.calibration.push({ threshold, ...metrics, balancedScore: (metrics.hitAtK + metrics.emptyOnUnanswerable) / 2 });
   }
   // Tie-break: preserve hit rate, then reduce irrelevant context, then use the smaller threshold.
-  const best = [...report.calibration].sort((a, b) => b.balancedScore - a.balancedScore || b.hitAtK - a.hitAtK || b.pagePrecision - a.pagePrecision || a.threshold - b.threshold)[0];
+  const best = [...report.calibration].sort((a, b) => b.balancedScore - a.balancedScore || b.hitAtK - a.hitAtK || b.pagePrecision - a.pagePrecision || a.threshold - b.threshold)[0]
+    || { threshold: defaults.similarityThreshold, source: 'rag-config.json' };
   report.options.similarityThreshold = best.threshold;
   report.chosenThreshold = best;
   report.calibrationCases = calibration;
-  console.log(`Выбран порог ${best.threshold}; контрольная выборка не участвует в подборе.`);
+  console.log(skipCalibration ? `Проверка с сохранённым порогом ${best.threshold}.` : `Выбран порог ${best.threshold}; контрольная выборка не участвует в подборе.`);
   const generateAnswers = process.argv.includes('--answers');
   for (const [mode, flags] of Object.entries(modes)) report.modes[mode] = { label: flags.label, cases: [] };
   for (const [i, item] of fixtures.test.entries()) {
     let answers;
-    if (generateAnswers && i < 8) answers = await compareRag(item.query, strategy, report.options, settings, dependencies);
+    if (generateAnswers) answers = await compareRag(item.query, strategy, report.options, settings, dependencies);
     for (const [mode, flags] of Object.entries(modes)) {
       const answer = answers?.results.find(value => value.mode === mode);
       const result = answer?.documentSearch || await searchBook(item.query, strategy, { ...report.options, filter: flags.filter, rewrite: flags.rewrite }, dependencies);
       if (flags.rewrite && result.rewrite.status === 'failed') throw new Error(`Test rewrite failed: ${result.rewrite.error}`);
       report.modes[mode].cases.push({ ...item, metrics: measurements(result, item), result,
-        ...(answer && { answer: answer.answer, usedSources: result.usedSources, tokenStats: answer.tokenStats, answerMs: answer.answerMs }) });
+        ...(answer && { answer: answer.answer, usedSources: result.usedSources, quotes: result.quotes,
+          answerChecks: answerChecks(answer.answer, result), tokenStats: answer.tokenStats, answerMs: answer.answerMs }) });
     }
     console.log(`Контроль ${i + 1}/${fixtures.test.length}${answers ? ' + два ответа' : ''}`);
     await writeFile(path.join(directory, 'report.json'), JSON.stringify(report, null, 2));
   }
-  for (const value of Object.values(report.modes)) value.summary = summarize(value.cases);
+  for (const value of Object.values(report.modes)) {
+    value.summary = summarize(value.cases);
+    value.answerSummary = summarizeAnswers(value.cases);
+  }
   if (process.argv.includes('--calibrate')) await writeFile(path.join(root, 'rag-config.json'), JSON.stringify(report.options, null, 2) + '\n');
   const lines = ['# Сравнение RAG', '', `Стратегия: ${strategy}; модель: ${settings.provider}/${settings.model}; Top-K ${defaults.candidateK} → ${defaults.contextK}; порог: ${best.threshold}.`, '', report.note, '',
     '| Режим | Hit@K (6 вопросов с ответом) | MRR | Точность по страницам | Пустой контекст (6 без ответа) | Среднее число фрагментов |', '| --- | ---: | ---: | ---: | ---: | ---: |'];
@@ -107,17 +131,23 @@ try {
     const m = value.summary;
     lines.push(`| ${value.label} | ${m.hitAtK.toFixed(3)} | ${m.mrr.toFixed(3)} | ${m.pagePrecision.toFixed(3)} | ${m.emptyOnUnanswerable.toFixed(3)} | ${m.meanContext.toFixed(2)} |`);
   }
-  lines.push('', 'Пустой контекст — результат фильтра; отказ модели оценивается отдельно по тексту ответа. 16 ответов генерируются только с --answers на первых восьми вопросах.');
+  lines.push('', 'Пустой контекст — результат фильтра. С --answers проверяются все 12 вопросов в обоих режимах. Промпт требует источники и цитаты. Дополнительная проверка цитирования и исправление отключены; смысловое соответствие оценивается вручную.', '',
+    '| Режим | Ответов | Отказов | Без источников | Без цитат | Отказ без уточнения |', '| --- | ---: | ---: | ---: | ---: | ---: |');
+  for (const value of Object.values(report.modes)) {
+    const m = value.answerSummary;
+    lines.push(`| ${value.label} | ${m.answered} | ${m.refused} | ${m.missingSources} | ${m.missingQuotes} | ${m.refusalsWithoutClarification} |`);
+  }
   for (const item of fixtures.test) {
     lines.push('', `## ${item.query}`, '');
     for (const value of Object.values(report.modes)) {
       const row = value.cases.find(row => row.query === item.query);
       lines.push(`### ${value.label}`, '', `Фрагментов: ${row.metrics.contextCount}; первый релевантный ранг: ${row.metrics.mrr ? Math.round(1 / row.metrics.mrr) : 'нет'}.`, '',
-        `Rewrite: ${row.result.rewrite.query}`, '', row.answer || 'Ответ не генерировался.', '', `Использованные источники: ${JSON.stringify(row.usedSources || [])}.`, '');
+        `Rewrite: ${row.result.rewrite.query}`, '', row.answer || 'Ответ не генерировался.', '', `Использованные источники: ${JSON.stringify(row.usedSources || [])}.`, '',
+        `Проверка ответа: ${JSON.stringify(row.answerChecks || null)}.`, '');
     }
   }
   await writeFile(path.join(directory, 'comparison.md'), lines.join('\n'));
-  console.log(JSON.stringify({ report: path.join(directory, 'comparison.md'), threshold: best.threshold, modes: Object.fromEntries(Object.entries(report.modes).map(([key, value]) => [key, value.summary])) }, null, 2));
+  console.log(JSON.stringify({ report: path.join(directory, 'comparison.md'), threshold: best.threshold, modes: Object.fromEntries(Object.entries(report.modes).map(([key, value]) => [key, { retrieval: value.summary, answers: value.answerSummary }])) }, null, 2));
 } catch (error) {
   report.error = error.message;
   await writeFile(path.join(directory, 'report.json'), JSON.stringify(report, null, 2));
