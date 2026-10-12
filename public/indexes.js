@@ -27,13 +27,16 @@
   try { mode.value = localStorage.getItem('documentIndexEnabled') === 'false' ? 'plain' : 'rag'; } catch {}
   window.selectedDocumentStrategy = () => mode.value === 'rag' ? select.value : null;
   const renderMode = () => {
+    const local = window.selectedRagModelSettings?.().provider === 'local';
     document.querySelector('#indexModeDescription').textContent = mode.value === 'rag'
-      ? `С RAG · ${modes[processing.value].label}: поиск до ${limits.candidateK} кандидатов → ${modes[processing.value].filter ? 'фильтр → ' : ''}до ${limits.contextK} фрагментов → ответ с источниками.`
+      ? `С RAG · ${modes[processing.value].label}: локальный поиск до ${limits.candidateK} кандидатов → ${modes[processing.value].filter ? 'фильтр → ' : ''}до ${limits.contextK} фрагментов → ${local ? 'ответ локальной модели' : 'ответ облачной модели'} с источниками.${local ? ' Переформулировка запроса также выполняется локально.' : ''}`
       : 'Без RAG: вопрос передаётся выбранной модели без поиска и фрагментов книги. MCP-инструменты доступны только для облачных моделей.';
     fields.similarityThreshold.disabled = mode.value === 'plain';
     processing.disabled = mode.value === 'plain';
   };
   renderMode();
+  document.querySelector('#model').addEventListener('change', renderMode);
+  window.addEventListener('rag-model-restored', renderMode);
   mode.addEventListener('change', () => {
     try { localStorage.setItem('documentIndexEnabled', String(mode.value === 'rag')); } catch {}
     renderMode();

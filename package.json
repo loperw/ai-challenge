@@ -14,6 +14,7 @@
     "search:documents": "node scripts/document-index.cjs search",
     "compare:chunking": "node scripts/document-index.cjs compare",
     "eval:rag": "node scripts/eval-rag.mjs",
+    "eval:local-rag": "node scripts/eval-local-rag.cjs",
     "test": "node --test"
   },
   "dependencies": {

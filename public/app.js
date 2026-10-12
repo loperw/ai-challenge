@@ -181,7 +181,10 @@ function closeProfileModal() {
 function restoreChatModel(chat) {
   if (!chat?.model) return;
   const option = [...modelEl.options].find(item => item.value === chat.model && item.dataset.provider === chat.provider);
-  if (option) modelEl.value = option.value;
+  if (option) {
+    modelEl.value = option.value;
+    window.dispatchEvent(new Event('rag-model-restored'));
+  }
 }
 
 function modelLabel(chat) {

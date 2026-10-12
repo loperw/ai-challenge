@@ -28,12 +28,14 @@ if (process.env.LOCAL_CHAT_VERIFY_CHILD === '1') {
         });
       });
       const answers = [];
-      for (const message of ['Запомни кодовое слово: сапфир. Ответь кратко.', 'Какое кодовое слово я назвал? Ответь одним словом.']) {
+      const rag = process.argv.includes('--rag');
+      for (const message of rag ? ['Какие модификаторы видимости есть в Kotlin?'] : ['Запомни кодовое слово: сапфир. Ответь кратко.', 'Какое кодовое слово я назвал? Ответь одним словом.']) {
         const started = Date.now();
         const response = await fetch(`http://127.0.0.1:${port}/api/chat`, {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ conversationId: 'local-verification', provider: 'local', model: 'qwen3.5:2b-q4_K_M',
-            temperature: 0, keepMessages: 10, message }), signal: AbortSignal.timeout(300000)
+            temperature: 0, keepMessages: 10, message,
+            ...(rag && { documentStrategy: 'structure', retrievalOptions: { rewrite: true } }) }), signal: AbortSignal.timeout(300000)
         });
         assert.equal(response.status, 200);
         const stream = await response.text();
@@ -42,10 +44,21 @@ if (process.env.LOCAL_CHAT_VERIFY_CHILD === '1') {
         assert.ok(!events.some(event => event.error), JSON.stringify(events.filter(event => event.error)));
         const answer = events.map(event => event.choices?.[0]?.delta?.content || '').join('');
         assert.ok(answer.trim());
+        if (rag) {
+          const saved = events.find(event => event.messages)?.messages.at(-1);
+          assert.equal(saved?.ragMode, 'rag');
+          assert.ok(saved.documentSearch.hits.length > 0);
+          assert.notEqual(saved.documentSearch.rewrite.status, 'failed');
+          assert.equal(saved.documentSearch.answerStatus, 'answered');
+          assert.ok(saved.documentSearch.usedSources.length > 0, 'Missing source metadata');
+          assert.ok(saved.documentSearch.quotes.length > 0, 'Missing quotes');
+          fs.writeFileSync(path.join(__dirname, '../local-llm/rag-http.json'), JSON.stringify({ message, answer,
+            seconds: (Date.now() - started) / 1000, documentSearch: saved.documentSearch }, null, 2) + '\n');
+        }
         answers.push(answer);
         console.log(JSON.stringify({ message, answer, seconds: (Date.now() - started) / 1000 }));
       }
-      assert.match(answers[1], /сапфир/i);
+      if (!rag) assert.match(answers[1], /сапфир/i);
       console.log('PASS: HTTP streaming chat and memory with cloud keys removed and non-local fetch blocked.');
     } finally {
       child.kill();

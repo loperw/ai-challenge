@@ -57,3 +57,33 @@ test('local failures explain recovery and roll back incomplete messages', async 
 test('local provider rejects arbitrary or cloud model names', () => {
   assert.throws(() => new Agent({ ...settings, model: 'cloud-model' }), /Выберите модель/);
 });
+
+test('local RAG uses retrieved context, keeps citations, and plain mode clears context', async () => {
+  const requests = [];
+  const context = { strategy: 'structure', hits: [{ score: .9, text: 'Data classes store data.',
+    chunk_id: 'data', file: 'book.pdf', section: 'Data', page_start: 34, page_end: 35 }] };
+  const agent = new Agent(settings, { fetchImpl: async (url, init) => {
+    assert.equal(url, 'http://127.0.0.1:11434/api/chat');
+    requests.push(JSON.parse(init.body));
+    return response(requests.length === 1 ? JSON.stringify({ status: 'answered', answer: 'Хранят данные [1].',
+      sources: [1], quotes: [{ source: 1, text: 'Data classes store data.' }] }) : 'Привет!');
+  }, openToolSession: () => assert.fail('RAG cannot open external tools') });
+  let retrieved = false;
+  await agent.respond('Зачем data class?', { ragMode: 'rag', retrieveDocuments: async query => {
+    assert.equal(query, 'Зачем data class?'); retrieved = true; return context;
+  } });
+  assert.ok(retrieved);
+  assert.equal(requests[0].format, 'json');
+  assert.match(requests[0].messages.at(-1).content, /Data classes store data/);
+  assert.deepEqual(agent.messages.at(-1).documentSearch.usedSources, [1]);
+  await agent.respond('Привет', { ragMode: 'plain' });
+  assert.equal(requests[1].format, undefined);
+  assert.ok(!requests[1].messages.some(m => m.content.includes('Data classes store data.')));
+});
+
+test('local RAG with no matching fragments refuses without generation', async () => {
+  const agent = new Agent(settings, { fetchImpl: () => assert.fail('No generation without sources') });
+  const answer = await agent.respond('Нет в книге', { documentSearch: { hits: [] }, ragMode: 'rag' });
+  assert.match(answer, /^Не знаю/);
+  assert.equal(agent.messages.at(-1).documentSearch.answerStatus, 'unknown');
+});
