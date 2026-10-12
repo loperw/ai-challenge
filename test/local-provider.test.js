@@ -58,6 +58,24 @@ test('local provider rejects arbitrary or cloud model names', () => {
   assert.throws(() => new Agent({ ...settings, model: 'cloud-model' }), /Выберите модель/);
 });
 
+test('local tuning respects explicit temperature, context and output budget', async () => {
+  const requests = [];
+  const make = extra => new Agent({ ...settings, ...extra }, { fetchImpl: async (_, init) => {
+    requests.push(JSON.parse(init.body)); return response('Готово');
+  } });
+  await make({ temperature: undefined }).respond('Привет');
+  assert.equal(requests[0].options.temperature, 0.2);
+  assert.equal(requests[0].options.num_ctx, 4096);
+  assert.equal(requests[0].options.num_predict, 768);
+  await make({ temperature: 0.7, contextWindow: 16384, maxTokens: 4000 }).respond('Привет');
+  assert.equal(requests[1].options.temperature, 0.7);
+  assert.equal(requests[1].options.num_ctx, 16384);
+  assert.ok(requests[1].options.num_predict > 768);
+  assert.throws(() => make({ contextWindow: 100 }), /Контекст локальной/);
+  const { localOptions } = require('../local-model-config');
+  assert.equal(localOptions(settings, [{ content: 'я'.repeat(8000) }]).num_ctx, 8192);
+});
+
 test('local RAG uses retrieved context, keeps citations, and plain mode clears context', async () => {
   const requests = [];
   const context = { strategy: 'structure', hits: [{ score: .9, text: 'Data classes store data.',
@@ -74,6 +92,8 @@ test('local RAG uses retrieved context, keeps citations, and plain mode clears c
   } });
   assert.ok(retrieved);
   assert.equal(requests[0].format, 'json');
+  assert.match(requests[0].messages[0].content, /never paraphrase a quotation/);
+  assert.ok(!requests[0].messages.at(-1).content.includes('Верни только JSON-объект'));
   assert.match(requests[0].messages.at(-1).content, /Data classes store data/);
   assert.deepEqual(agent.messages.at(-1).documentSearch.usedSources, [1]);
   await agent.respond('Привет', { ragMode: 'plain' });

@@ -951,7 +951,7 @@ compareChatsButton.addEventListener('click', async () => {
       ephemeral: true,
       profileId: selectedProfileId,
       jsonMode: false,
-      temperature: defaultTemperature,
+      temperature: selectedProvider() === 'local' ? 0.2 : defaultTemperature,
 
     }) });
     if (!response.ok) {
@@ -1008,7 +1008,7 @@ async function sendConversationMessage(text, { taskAction = false, taskActionLab
   if (sendButton.disabled) return '';
   const settings = {
     jsonMode: jsonModeEl.checked,
-    temperature: defaultTemperature,
+    temperature: selectedProvider() === 'local' ? 0.2 : defaultTemperature,
     maxTokens: maxTokensEl.value,
     keepMessages: keepMessagesEl.value,
     contextStrategy: strategyEl.value,
@@ -1249,7 +1249,7 @@ createTaskButton.addEventListener('click', async () => {
     const compact = description.replace(/\s+/g, ' ');
     const payload = {
       name: `Задача: ${compact.slice(0, 105)}`, description, profileId: selectedProfileId,
-      model: modelEl.value, provider: selectedProvider(), temperature: defaultTemperature,
+      model: modelEl.value, provider: selectedProvider(), temperature: selectedProvider() === 'local' ? 0.2 : defaultTemperature,
       maxTokens: maxTokensEl.value, keepMessages: 100, contextStrategy: 'sliding', jsonMode: jsonModeEl.checked
     };
     const response = await apiFetch('/api/tasks', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });

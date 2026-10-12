@@ -1,5 +1,6 @@
 // Ollama stays on loopback: selecting a local model cannot route to a cloud provider.
 const ENDPOINT = 'http://127.0.0.1:11434/api/chat';
+const { localOptions } = require('./local-model-config');
 
 async function* localStream(body, AgentError) {
   const decoder = new TextDecoder();
@@ -40,6 +41,8 @@ async function createLocalCompletion(agent, options, AgentError) {
   const settings = agent.settings;
   const system = [agent.systemPrompt(), options.toolPrompt].filter(Boolean).join('\n\n');
   const messages = options.messages || agent.contextMessages().map(({ role, content }) => ({ role, content }));
+  const requestMessages = [...(system ? [{ role: 'system', content: system }] : []), ...messages];
+  const generationOptions = localOptions(settings, requestMessages, agent.responseTokenLimit(options));
   let response;
   try {
     response = await agent.fetch(ENDPOINT, {
@@ -48,12 +51,10 @@ async function createLocalCompletion(agent, options, AgentError) {
       signal: AbortSignal.timeout(300_000),
       body: JSON.stringify({
         model: settings.model, stream: true, think: false,
-        messages: [...(system ? [{ role: 'system', content: system }] : []), ...messages],
+        messages: requestMessages,
         ...((settings.jsonMode || agent.documentSearch) && { format: 'json' }),
         options: {
-          temperature: settings.temperature,
-          num_ctx: 8192,
-          num_predict: settings.maxTokens === undefined ? 2048 : agent.responseTokenLimit(options),
+          ...generationOptions,
           ...(settings.stopSequence && { stop: [settings.stopSequence] })
         }
       })
