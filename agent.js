@@ -54,10 +54,11 @@ async function* ssePayloads(body) {
 function validatedSettings(settings) {
   const provider = settings.provider;
   const model = settings.model;
-  if (!['deepseek', 'openrouter', 'gemini'].includes(provider)) {
+  if (!['deepseek', 'openrouter', 'gemini', 'local'].includes(provider)) {
     throw new AgentError('Неизвестный провайдер модели.', 400);
   }
   if (typeof model !== 'string'
+    || (provider === 'local' && model !== 'qwen3.5:2b-q4_K_M')
     || (provider === 'deepseek' && !DEEPSEEK_MODELS.has(model))
     || (provider === 'gemini' && !GEMINI_MODELS.has(model))
     || (provider === 'openrouter' && model !== 'openrouter/free' && !model.endsWith(':free'))) {
@@ -483,7 +484,7 @@ ${invariants.map((item, index) => `${index + 1}. ${item}`).join('\n')}
       if (lowRelevance) {
         this.completionUsage = { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
         answer = this.formatRagAnswer('');
-      } else if (this.openToolSession && toolsEnabled && !documentSearch) {
+      } else if (this.openToolSession && toolsEnabled && !documentSearch && this.settings.provider !== 'local') {
         const { runToolLoop } = await import('./mcp/tool-loop.mjs');
         answer = await runToolLoop(this, { openSession: this.openToolSession, onTrace, onResult: (name, result) => {
           const file = !result.isError && result.structuredContent?.file;
@@ -575,6 +576,9 @@ ${invariants.map((item, index) => `${index + 1}. ${item}`).join('\n')}
   }
 
   async createCompletion(options = {}) {
+    if (this.settings.provider === 'local') {
+      return require('./local-provider').createLocalCompletion(this, options, AgentError);
+    }
     if (this.settings.provider === 'gemini') return this.createGeminiCompletion(options);
 
     const isDeepSeek = this.settings.provider === 'deepseek';

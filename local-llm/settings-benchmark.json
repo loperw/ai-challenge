@@ -1,0 +1,257 @@
+{
+  "model": "qwen3.5:2b-q4_K_M",
+  "cases": [
+    {
+      "id": "sum",
+      "prompt": "Сколько будет 17 + 25? Ответь кратко по-русски.",
+      "expected": 42
+    },
+    {
+      "id": "subtract",
+      "prompt": "Вычисли 1000 - 487. Ответь только числом.",
+      "expected": 513
+    },
+    {
+      "id": "multiply",
+      "prompt": "Вычисли 18 × 13. Ответь только числом.",
+      "expected": 234
+    },
+    {
+      "id": "discount",
+      "prompt": "Товар стоит 2400 рублей. Скидка 15%, затем к цене добавляется доставка 300 рублей. Сколько рублей к оплате? Ответь только числом.",
+      "expected": 2340
+    },
+    {
+      "id": "precedence",
+      "prompt": "Вычисли 12 + 6 × 7 - 8. Ответь только числом.",
+      "expected": 46
+    },
+    {
+      "id": "rate",
+      "prompt": "Пять одинаковых станков делают пять деталей за пять минут. Сколько минут нужно ста таким станкам, чтобы сделать сто деталей? Ответь только числом.",
+      "expected": 5
+    }
+  ],
+  "results": [
+    {
+      "mode": "baseline",
+      "id": "sum",
+      "expected": 42,
+      "answer": "42",
+      "correct": true,
+      "seconds": 0.645,
+      "generatedTokens": 3,
+      "thinkingCharacters": 0,
+      "doneReason": "stop"
+    },
+    {
+      "mode": "baseline",
+      "id": "subtract",
+      "expected": 513,
+      "answer": "513",
+      "correct": true,
+      "seconds": 0.143,
+      "generatedTokens": 4,
+      "thinkingCharacters": 0,
+      "doneReason": "stop"
+    },
+    {
+      "mode": "baseline",
+      "id": "multiply",
+      "expected": 234,
+      "answer": "234",
+      "correct": true,
+      "seconds": 0.151,
+      "generatedTokens": 4,
+      "thinkingCharacters": 0,
+      "doneReason": "stop"
+    },
+    {
+      "mode": "baseline",
+      "id": "discount",
+      "expected": 2340,
+      "answer": "1980",
+      "correct": false,
+      "seconds": 0.431,
+      "generatedTokens": 5,
+      "thinkingCharacters": 0,
+      "doneReason": "stop"
+    },
+    {
+      "mode": "baseline",
+      "id": "precedence",
+      "expected": 46,
+      "answer": "30",
+      "correct": false,
+      "seconds": 0.15,
+      "generatedTokens": 3,
+      "thinkingCharacters": 0,
+      "doneReason": "stop"
+    },
+    {
+      "mode": "baseline",
+      "id": "rate",
+      "expected": 5,
+      "answer": "20",
+      "correct": false,
+      "seconds": 0.126,
+      "generatedTokens": 3,
+      "thinkingCharacters": 0,
+      "doneReason": "stop"
+    },
+    {
+      "mode": "zero",
+      "id": "sum",
+      "expected": 42,
+      "answer": "42",
+      "correct": true,
+      "seconds": 0.119,
+      "generatedTokens": 3,
+      "thinkingCharacters": 0,
+      "doneReason": "stop"
+    },
+    {
+      "mode": "zero",
+      "id": "subtract",
+      "expected": 513,
+      "answer": "513",
+      "correct": true,
+      "seconds": 0.095,
+      "generatedTokens": 4,
+      "thinkingCharacters": 0,
+      "doneReason": "stop"
+    },
+    {
+      "mode": "zero",
+      "id": "multiply",
+      "expected": 234,
+      "answer": "234",
+      "correct": true,
+      "seconds": 0.108,
+      "generatedTokens": 4,
+      "thinkingCharacters": 0,
+      "doneReason": "stop"
+    },
+    {
+      "mode": "zero",
+      "id": "discount",
+      "expected": 2340,
+      "answer": "2160",
+      "correct": false,
+      "seconds": 0.128,
+      "generatedTokens": 5,
+      "thinkingCharacters": 0,
+      "doneReason": "stop"
+    },
+    {
+      "mode": "zero",
+      "id": "precedence",
+      "expected": 46,
+      "answer": "40",
+      "correct": false,
+      "seconds": 0.102,
+      "generatedTokens": 3,
+      "thinkingCharacters": 0,
+      "doneReason": "stop"
+    },
+    {
+      "mode": "zero",
+      "id": "rate",
+      "expected": 5,
+      "answer": "50",
+      "correct": false,
+      "seconds": 0.093,
+      "generatedTokens": 3,
+      "thinkingCharacters": 0,
+      "doneReason": "stop"
+    },
+    {
+      "mode": "zero-thinking",
+      "id": "sum",
+      "expected": 42,
+      "answer": "",
+      "correct": false,
+      "seconds": 23.29,
+      "generatedTokens": 2048,
+      "thinkingCharacters": 5641,
+      "doneReason": "length"
+    },
+    {
+      "mode": "zero-thinking",
+      "id": "subtract",
+      "expected": 513,
+      "answer": "513",
+      "correct": true,
+      "seconds": 3.719,
+      "generatedTokens": 234,
+      "thinkingCharacters": 562,
+      "doneReason": "stop"
+    },
+    {
+      "mode": "zero-thinking",
+      "id": "multiply",
+      "expected": 234,
+      "answer": "234",
+      "correct": true,
+      "seconds": 3.411,
+      "generatedTokens": 286,
+      "thinkingCharacters": 763,
+      "doneReason": "stop"
+    },
+    {
+      "mode": "zero-thinking",
+      "id": "discount",
+      "expected": 2340,
+      "answer": "2340",
+      "correct": true,
+      "seconds": 3.907,
+      "generatedTokens": 346,
+      "thinkingCharacters": 873,
+      "doneReason": "stop"
+    },
+    {
+      "mode": "zero-thinking",
+      "id": "precedence",
+      "expected": 46,
+      "answer": "46",
+      "correct": true,
+      "seconds": 3.706,
+      "generatedTokens": 326,
+      "thinkingCharacters": 927,
+      "doneReason": "stop"
+    },
+    {
+      "mode": "zero-thinking",
+      "id": "rate",
+      "expected": 5,
+      "answer": "",
+      "correct": false,
+      "seconds": 23.001,
+      "generatedTokens": 2048,
+      "thinkingCharacters": 6375,
+      "doneReason": "length"
+    },
+    {
+      "mode": "zero-thinking-8192",
+      "id": "sum",
+      "expected": 42,
+      "answer": "17 + 25 = 42",
+      "correct": false,
+      "seconds": 23.291,
+      "generatedTokens": 1245,
+      "thinkingCharacters": 3437,
+      "doneReason": "stop"
+    },
+    {
+      "mode": "zero-thinking-8192",
+      "id": "rate",
+      "expected": 5,
+      "answer": "",
+      "correct": false,
+      "seconds": 95.018,
+      "generatedTokens": 8192,
+      "thinkingCharacters": 25120,
+      "doneReason": "length"
+    }
+  ]
+}

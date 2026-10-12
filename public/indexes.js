@@ -29,7 +29,7 @@
   const renderMode = () => {
     document.querySelector('#indexModeDescription').textContent = mode.value === 'rag'
       ? `С RAG · ${modes[processing.value].label}: поиск до ${limits.candidateK} кандидатов → ${modes[processing.value].filter ? 'фильтр → ' : ''}до ${limits.contextK} фрагментов → ответ с источниками.`
-      : 'Без RAG: вопрос передаётся LLM без поиска и фрагментов книги. Доступны обычные MCP-инструменты чата.';
+      : 'Без RAG: вопрос передаётся выбранной модели без поиска и фрагментов книги. MCP-инструменты доступны только для облачных моделей.';
     fields.similarityThreshold.disabled = mode.value === 'plain';
     processing.disabled = mode.value === 'plain';
   };

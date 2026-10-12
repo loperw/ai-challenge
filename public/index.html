@@ -72,6 +72,9 @@
       <section id="settingsTab" class="side-tab-panel" role="tabpanel" aria-labelledby="settingsTabButton">
       <div class="settings-title"><span class="settings-icon">⚙</span><div><p class="eyebrow">ПАРАМЕТРЫ</p><h2>Настройки</h2></div></div>
       <label class="field"><span>Модель</span><select id="model">
+        <optgroup label="Локальная — Ollama">
+          <option value="qwen3.5:2b-q4_K_M" data-provider="local">Локальная — Qwen3.5 2B (Q4_K_M)</option>
+        </optgroup>
         <optgroup label="DeepSeek">
           <option value="deepseek-flash" data-provider="deepseek">DeepSeek V4.1 Flash</option>
         </optgroup>
@@ -83,7 +86,7 @@
           <option value="gemini-3.5-flash-lite" data-provider="gemini">Gemini 3.5 Flash-Lite</option>
           <option value="gemini-3.5-flash" data-provider="gemini">Gemini 3.5 Flash</option>
         </optgroup>
-      </select></label>
+      </select><small>Локальная Qwen работает через Ollama на этом компьютере, без облачных ключей и внешних MCP-инструментов.</small></label>
       <label class="field format-field" for="jsonMode">
         <div class="field-heading"><span>JSON-формат ответа</span><span class="format-control"><output id="jsonModeStatus">Выключен</output><span class="switch"><input id="jsonMode" type="checkbox" aria-label="Отвечать в JSON-формате" /><span class="switch-track" aria-hidden="true"></span></span></span></div>
         <small>JSON-формат: модель вернёт только корректный JSON без пояснений.</small>
