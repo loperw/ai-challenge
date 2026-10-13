@@ -53,13 +53,14 @@ async function* ssePayloads(body) {
 }
 
 function validatedSettings(settings) {
+  settings = require('./service-policy').applySettings(settings);
   const provider = settings.provider;
   const model = settings.model;
   if (!['deepseek', 'openrouter', 'gemini', 'local'].includes(provider)) {
     throw new AgentError('Неизвестный провайдер модели.', 400);
   }
   if (typeof model !== 'string'
-    || (provider === 'local' && model !== 'qwen3.5:2b-q4_K_M')
+    || (provider === 'local' && model !== (require('./service-policy').policy().enabled ? require('./service-policy').policy().model : 'qwen3.5:2b-q4_K_M'))
     || (provider === 'deepseek' && !DEEPSEEK_MODELS.has(model))
     || (provider === 'gemini' && !GEMINI_MODELS.has(model))
     || (provider === 'openrouter' && model !== 'openrouter/free' && !model.endsWith(':free'))) {
@@ -83,7 +84,7 @@ function validatedSettings(settings) {
   const contextWindow = settings.contextWindow === undefined || settings.contextWindow === ''
     ? undefined : Number(settings.contextWindow);
   if (provider === 'local' && contextWindow !== undefined &&
-      (!Number.isInteger(contextWindow) || contextWindow < 4096 || contextWindow > 32768)) {
+      (!Number.isInteger(contextWindow) || contextWindow < (require('./service-policy').policy().enabled ? 512 : 4096) || contextWindow > 32768)) {
     throw new AgentError('Контекст локальной модели должен быть целым числом от 4096 до 32768.', 400);
   }
 
@@ -281,6 +282,7 @@ ${invariants.map((item, index) => `${index + 1}. ${item}`).join('\n')}
   }
 
   responseTokenLimit(options = {}) {
+    if (require('./service-policy').policy().enabled) return this.settings.maxTokens;
     if (this.settings.maxTokens === undefined) return undefined;
     const inputTokens = options.messages
       ? estimateTokens(JSON.stringify(this.settings.provider === 'gemini' ? options.geminiContents : options.messages))

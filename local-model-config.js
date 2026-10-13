@@ -6,6 +6,16 @@ Example for excerpt 1 "Библиотека открывается в девят
 If the answer is absent from the excerpts, return {"status":"unknown","answer":"Не знаю. Уточните вопрос или предоставьте нужный фрагмент.","sources":[],"quotes":[]}. No extra fields or reasoning.`;
 
 function localOptions(settings, messages, outputLimit) {
+  const p = require('./service-policy').policy();
+  if (p.enabled) {
+    const num_ctx = Math.min(settings.contextWindow || p.context, p.context);
+    const num_predict = Math.min(outputLimit || p.output, p.output);
+    // UTF-8 byte count is deliberately conservative for byte-fallback tokenizers.
+    // Reserve template/system overhead rather than silently truncate the prompt.
+    const budget = messages.reduce((n, m) => n + Buffer.byteLength(m.content || '', 'utf8') + 32, 128);
+    if (budget + num_predict > num_ctx) throw Object.assign(new Error('Контекст переполнен. Сократите сообщение или начните новый чат.'), { status: 413 });
+    return { temperature: settings.temperature, num_ctx, num_predict, num_thread: 1, num_batch: 64 };
+  }
   const num_predict = outputLimit ?? 768;
   // This is a heuristic with headroom, not the model tokenizer. Keep the larger
   // window for documents/history; only short requests use the smaller KV cache.

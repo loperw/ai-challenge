@@ -1,0 +1,10 @@
+[Unit]
+Description=Private chat VPN access rules
+After=network-online.target docker.service
+Before=chat-agent.service
+[Service]
+Type=oneshot
+ExecStart=/bin/bash /opt/chat-agent/deploy/vps/vpn-access.sh
+RemainAfterExit=yes
+[Install]
+WantedBy=multi-user.target

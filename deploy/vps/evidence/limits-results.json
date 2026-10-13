@@ -1,0 +1,36 @@
+{
+  "checks": [
+    {
+      "name": "cloud rejected",
+      "status": 400
+    },
+    {
+      "name": "model rejected",
+      "status": 400
+    },
+    {
+      "name": "context setting capped",
+      "status": 400
+    },
+    {
+      "name": "output capped",
+      "status": 400
+    },
+    {
+      "name": "prompt budget enforced",
+      "status": 413
+    },
+    {
+      "name": "body capped",
+      "status": 413
+    },
+    {
+      "name": "cross-origin rejected",
+      "status": 403
+    },
+    {
+      "name": "13th write rate limited",
+      "status": 429
+    }
+  ]
+}

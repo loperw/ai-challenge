@@ -1,6 +1,8 @@
 // Ollama stays on loopback: selecting a local model cannot route to a cloud provider.
 const ENDPOINT = 'http://127.0.0.1:11434/api/chat';
 const { localOptions } = require('./local-model-config');
+const { policy, createGate } = require('./service-policy');
+const gate = createGate(2);
 
 async function* localStream(body, AgentError) {
   const decoder = new TextDecoder();
@@ -43,6 +45,7 @@ async function createLocalCompletion(agent, options, AgentError) {
   const messages = options.messages || agent.contextMessages().map(({ role, content }) => ({ role, content }));
   const requestMessages = [...(system ? [{ role: 'system', content: system }] : []), ...messages];
   const generationOptions = localOptions(settings, requestMessages, agent.responseTokenLimit(options));
+  const release = policy().enabled ? gate.acquire() : () => {};
   let response;
   try {
     response = await agent.fetch(ENDPOINT, {
@@ -60,15 +63,20 @@ async function createLocalCompletion(agent, options, AgentError) {
       })
     });
   } catch {
+    release();
     throw new AgentError('Ollama недоступна или не ответила вовремя. Запустите scripts/start-index-ollama.ps1 и повторите запрос.', 503);
   }
   if (!response.ok) {
+    release();
     if (response.status === 404) throw new AgentError(`Локальная модель не установлена. Выполните: ollama pull ${settings.model}`, 503);
     let detail = '';
     try { detail = (await response.json()).error || ''; } catch { }
     throw new AgentError(`Ошибка Ollama: ${detail || response.status}`, 502);
   }
-  return { provider: 'local', body: localStream(response.body, AgentError) };
+  return { provider: 'local', body: (async function* () {
+    try { yield* localStream(response.body, AgentError); }
+    finally { release(); }
+  })() };
 }
 
 module.exports = { createLocalCompletion };

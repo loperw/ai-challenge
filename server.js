@@ -21,6 +21,10 @@ if (fs.existsSync(envPath)) {
 }
 
 const { SQLiteStore } = require('./sqlite-store');
+const { policy, createRateLimiter, createGate, fail } = require('./service-policy');
+const servicePolicy = policy();
+const allowRequest = createRateLimiter(servicePolicy.requestsPerMinute);
+const chatGate = createGate(servicePolicy.parallel);
 const store = new SQLiteStore(process.env.AGENT_DB_PATH || path.join(__dirname, 'data', 'agent-memory.sqlite'), {
   legacyConversationsPath: process.env.AGENT_DB_PATH ? undefined : path.join(__dirname, 'data', 'conversations.json'),
   legacyMemoryPath: process.env.AGENT_DB_PATH ? undefined : path.join(__dirname, 'data', 'memory.json')
@@ -59,7 +63,12 @@ function writeMcpTrace(response, trace) {
 
 async function readBody(request) {
   const chunks = [];
-  for await (const chunk of request) chunks.push(chunk);
+  let size = 0;
+  for await (const chunk of request) {
+    size += chunk.length;
+    if (servicePolicy.enabled && size > servicePolicy.bodyBytes) throw fail('Слишком большой запрос.', 413);
+    chunks.push(chunk);
+  }
   return JSON.parse(Buffer.concat(chunks).toString('utf8'));
 }
 
@@ -91,9 +100,15 @@ function invariantFields(body) {
 
 async function handleChat(request, response) {
   let task = null;
+  let release = () => {};
 
   try {
     const body = await readBody(request);
+    if (servicePolicy.enabled) {
+      if (typeof body.message === 'string' && Buffer.byteLength(body.message, 'utf8') > servicePolicy.context - servicePolicy.output - 160)
+        throw fail('Контекст переполнен. Сократите сообщение или начните новый чат.', 413);
+      release = chatGate.acquire();
+    }
     if (!body.ephemeral && !validConversationId(body.conversationId)) {
       return sendJson(response, 400, { error: 'Некорректный идентификатор диалога.' });
     }
@@ -174,6 +189,8 @@ async function handleChat(request, response) {
     });
     response.write(`data: ${JSON.stringify({ error: message })}\n\n`);
     response.end('data: [DONE]\n\n');
+  } finally {
+    release();
   }
 }
 
@@ -190,6 +207,24 @@ async function handleReset(request, response) {
 }
 
 const server = http.createServer(async (request, response) => {
+  if (servicePolicy.enabled) response.setHeader('Content-Security-Policy', "default-src 'self'; connect-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; font-src 'self'; frame-ancestors 'none'");
+  if (servicePolicy.enabled && !['GET', 'HEAD'].includes(request.method)) {
+    // VPN access is not a substitute for rejecting cross-site browser writes.
+    const origin = request.headers.origin;
+    if (origin && origin !== `http://${request.headers.host}` && origin !== `https://${request.headers.host}`)
+      return sendJson(response, 403, { error: 'Запрос с другого сайта запрещен.' });
+    if (!allowRequest(request.socket.remoteAddress)) {
+      response.setHeader('Retry-After', '60');
+      return sendJson(response, 429, { error: 'Лимит: 12 запросов в минуту с одного адреса.' });
+    }
+  }
+  if (request.method === 'GET' && request.url === '/api/health') return sendJson(response, 200, { ok: true, localOnly: servicePolicy.enabled });
+  if (request.method === 'GET' && request.url === '/runtime-config.js') {
+    response.writeHead(200, { 'Content-Type': 'text/javascript; charset=utf-8', 'Cache-Control': 'no-store' });
+    return response.end(`window.serviceConfig=${JSON.stringify(servicePolicy).replace(/</g, '\\u003c')};`);
+  }
+  if (servicePolicy.enabled && /^\/api\/(document-search|rag-compare|schedules)(\/|$)/.test(request.url))
+    return sendJson(response, 403, { error: 'Эта интеграция отключена в приватном режиме VPS.' });
   if (request.method === 'GET' && request.url === '/api/document-book') {
     const book = describeIndexes(path.join(__dirname, 'data', 'document-index')).book;
     if (!book || path.extname(book.source).toLowerCase() !== '.pdf' || !fs.existsSync(book.source)) return sendJson(response, 404, { error: 'Исходный PDF не найден.' });
@@ -439,8 +474,8 @@ const server = http.createServer(async (request, response) => {
   });
 });
 
-server.listen(process.env.PORT || 3000, () => {
-  scheduler = startScheduler(schedules, {
+server.listen(process.env.PORT || 3000, process.env.HOST || (servicePolicy.enabled ? '127.0.0.1' : undefined), () => {
+  if (!servicePolicy.enabled) scheduler = startScheduler(schedules, {
     weather: async input => (await import('./mcp/weather.mjs')).getWeather(input)
   });
   console.log(`Open http://localhost:${server.address().port}`);
