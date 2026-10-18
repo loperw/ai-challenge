@@ -23,7 +23,7 @@ if (process.env.PROJECT_HELP_EVAL_CHILD === '1') {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'project-help-eval-'));
     const provider = process.env.EVAL_PROVIDER || 'deepseek';
     const model = process.env.EVAL_MODEL || 'deepseek-flash';
-    const output = path.join(__dirname, `../data/project-help-e2e-${provider}.json`);
+    const output = path.join(__dirname, `../data/project-help-e2e-${provider}${process.env.EVAL_CASES ? '-targeted' : ''}.json`);
     fs.mkdirSync(path.dirname(output), { recursive: true });
     const branch = execFileSync('git', ['branch', '--show-current'], { encoding: 'utf8' }).trim();
     const upstream = [];
@@ -48,6 +48,7 @@ if (process.env.PROJECT_HELP_EVAL_CHILD === '1') {
         { id: 'structure', question: '/help Какие основные файлы проекта и за что они отвечают?', expected: [/server\.js/, /agent\.js/, /public\//] },
         { id: 'storage', question: '/help Где хранится история?', expected: [/sqlite-store\.js/, /agent-memory\.sqlite/] },
         { id: 'paraphrase', question: '/help В каком месте сохраняются прошлые беседы?', expected: [/agent-memory\.sqlite/] },
+        { id: 'rag-history', question: '/help в какой ветке была добавлена впервые RAG?', expected: [/codex\/ai-challenge-21/] },
         { id: 'branch', question: '/help Какая текущая git-ветка?', expected: [new RegExp(branch)] },
         { id: 'api', question: '/help Какой формат запроса и ответа у API чата?', expected: [/\/api\/chat/, /conversationId/, /text\/event-stream|SSE/i] },
         { id: 'unknown', question: '/help Какой точный SLA гарантирован проекту по договору с заказчиком?', expected: [/не знаю|нет (?:сведений|информации|ответа)|не (?:указан|описан|содерж)/i] },
