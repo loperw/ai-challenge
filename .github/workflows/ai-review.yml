@@ -1,0 +1,74 @@
+name: AI PR review
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, edited]
+permissions:
+  contents: read
+  pull-requests: write
+concurrency:
+  group: ai-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+jobs:
+  review:
+    if: github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Check configuration
+        env:
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+        run: node -e "if (!process.env.DEEPSEEK_API_KEY) throw new Error('Set repository secret DEEPSEEK_API_KEY')"
+      - name: Test review input handling
+        run: node --test test/pr-review.test.js
+      - name: Start embedding service
+        run: |
+          docker run -d --name review-ollama -p 127.0.0.1:11434:11434 ollama/ollama:0.18.0
+          for i in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:11434/api/tags; then break; fi
+            sleep 2
+          done
+          docker exec review-ollama ollama pull nomic-embed-text
+      - uses: actions/cache@v4
+        with:
+          path: data/pr-review-vectors.json
+          key: pr-vectors-v1-${{ runner.os }}-${{ github.event.pull_request.head.sha }}
+          restore-keys: pr-vectors-v1-${{ runner.os }}-
+      - name: Review diff with DeepSeek and embedding RAG
+        env:
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: node scripts/review-pr.cjs "$BASE_SHA" "$HEAD_SHA"
+      - name: Publish review
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const body = fs.readFileSync('data/pr-review/review.md', 'utf8');
+            const { owner, repo } = context.repo;
+            const issue_number = context.issue.number;
+            const current = await github.rest.pulls.get({ owner, repo, pull_number: issue_number });
+            if (current.data.head.sha !== context.payload.pull_request.head.sha ||
+                current.data.base.sha !== context.payload.pull_request.base.sha) {
+              core.notice('PR changed during review; skipping stale result.');
+              return;
+            }
+            const comments = await github.paginate(github.rest.issues.listComments, { owner, repo, issue_number });
+            const previous = comments.find(c => c.user.login === 'github-actions[bot]' && c.body.startsWith('<!-- ai-pr-review -->'));
+            if (previous) await github.rest.issues.updateComment({ owner, repo, comment_id: previous.id, body });
+            else await github.rest.issues.createComment({ owner, repo, issue_number, body });
+            await core.summary.addRaw(body).write();
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ai-review-${{ github.event.pull_request.number }}
+          path: data/pr-review/
+          retention-days: 7
