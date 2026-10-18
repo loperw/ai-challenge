@@ -36,11 +36,18 @@ Node.js 24, Git и Ollama с `nomic-embed-text` должны быть досту
 ```powershell
 node --test test/pr-review.test.js
 node scripts/review-pr.cjs codex/ai-challenge-31 HEAD
+node scripts/eval-pr-review.cjs
 ```
 
 Результаты в `data/pr-review/`: `diff.patch`, `input.json` (контекст, ограничения),
 `review.md`, `result.json` (модель, usage, источники). В CI они доступны как артефакт 7 дней.
 Ошибка API, отсутствие ключа или эмбеддингов завершают job ошибкой; успешное ревью не имитируется.
+
+`eval-pr-review.cjs` создаёт временный Git-репозиторий с известной регрессией:
+обращение к балансу отсутствующего аккаунта вместо возврата нуля по контракту README.
+Проверка делает реальные запросы к Ollama и DeepSeek, проверяет наличие обоих типов
+RAG-контекста и обнаружение ошибки. Результат сохраняется в `data/pr-review-eval/`.
+Редактирование только заголовка/описания PR не запускает повторный анализ; смена base запускает.
 
 ## Ограничения
 
