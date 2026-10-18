@@ -58,7 +58,10 @@ async function review({ root, base, head, output, apiKey = process.env.DEEPSEEK_
   console.error(`Indexing ${input.chunks.length} code/documentation chunks; ${input.files.length} changed files.`);
   const index = await buildVectorIndex({ chunks: input.chunks,
     fingerprint: crypto.createHash('sha256').update(JSON.stringify(input.chunks)).digest('hex') },
-  { cacheFile: path.join(root, 'data', 'pr-review-vectors.json') });
+  { cacheFile: path.join(root, 'data', 'pr-review-vectors.json'),
+    onProgress: ({ completed, total }) => {
+      if (completed % 80 === 0 || completed === total) console.error(`Embeddings: ${completed}/${total}`);
+    } });
   console.error(`Embedding index ready: ${index.embeddedCount} new chunks. Retrieving context.`);
   const queries = input.queries;
   const found = new Map();

@@ -45,7 +45,7 @@ function readCache(file, digest) {
     return value;
   } catch { return null; }
 }
-async function buildVectorIndex(index, { cacheFile, fetchImpl = globalThis.fetch } = {}) {
+async function buildVectorIndex(index, { cacheFile, fetchImpl = globalThis.fetch, onProgress = () => {} } = {}) {
   if (!cacheFile) throw new Error('Не задан путь векторного индекса.');
   const previous = locks.get(cacheFile) || Promise.resolve();
   const current = previous.catch(() => {}).then(async () => {
@@ -65,6 +65,7 @@ async function buildVectorIndex(index, { cacheFile, fetchImpl = globalThis.fetch
       const batch = missing.slice(offset, offset + 8);
       const vectors = await embed(batch.flatMap(entry => [entry.text, entry.title]), false, fetchImpl);
       batch.forEach((entry, i) => { entry.vector = vectors[i * 2]; entry.titleVector = vectors[i * 2 + 1]; });
+      onProgress({ completed: Math.min(offset + batch.length, missing.length), total: missing.length });
     }
     const dimension = entries[0]?.vector.length || 0;
     for (const entry of entries) { normalize(entry.vector, dimension); normalize(entry.titleVector, dimension); }
