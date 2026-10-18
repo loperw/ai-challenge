@@ -6,6 +6,7 @@
     "node": ">=22.5.0"
   },
   "scripts": {
+    "eval:support": "node scripts/eval-support.cjs",
     "index:project": "node scripts/index-project.cjs",
     "eval:project-help": "node scripts/verify-project-help.cjs",
     "start": "node server.js",

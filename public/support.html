@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="ru">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Поддержка · SupportDesk</title><link rel="stylesheet" href="/support.css"><script src="/support.js" defer></script></head>
+<body>
+<header class="bar"><a href="/">← AI Chat</a><strong>SupportDesk <span> / Поддержка</span></strong><span class="badge">DeepSeek · MCP · RAG</span></header>
+<main>
+  <aside class="card context">
+    <p class="eyebrow">КОНТЕКСТ ОБРАЩЕНИЯ</p><h1>Кому помогаем?</h1>
+    <p class="muted">Демонстрационные пользователи и тикеты. Выбор профиля не является авторизацией.</p>
+    <label>Пользователь<select id="user" disabled></select></label>
+    <div id="profile" class="detail"></div>
+    <label>Обращение<select id="ticket" disabled><option value="">Общий вопрос о продукте</option></select></label>
+    <div id="ticketDetails" class="detail"></div>
+    <p class="muted">Данные читаются через MCP. База знаний содержит правила вымышленного продукта SupportDesk.</p>
+    <a href="/api/support/source/plans" target="_blank" rel="noopener">О продукте ↗</a>
+  </aside>
+  <section class="card conversation">
+    <div class="conversation-heading"><div><p class="eyebrow">AI-АССИСТЕНТ</p><h2>Разберёмся вместе</h2></div><button id="clear" type="button">Очистить диалог</button></div>
+    <p class="muted">Ответы по FAQ и документации с учётом выбранного обращения.</p>
+    <div class="examples"><button type="button" data-question="Почему не работает авторизация?">Не получается войти</button><button type="button" data-question="Как выгрузить обращения в CSV?">Экспорт обращений</button><button type="button" data-question="Какой SLA гарантирован договором?">Условия SLA</button></div>
+    <div id="messages" aria-live="polite"><p class="empty">Выберите обращение и задайте вопрос. Под ответом появятся источники и данные MCP.</p></div>
+    <form id="form"><label for="question" class="sr-only">Вопрос поддержке</label><textarea id="question" rows="3" maxlength="4000" placeholder="Опишите проблему…" required></textarea><div class="send-row"><span id="status" role="status">Загрузка пользователей…</span><button id="send" type="submit" disabled>Отправить ↑</button></div></form>
+  </section>
+</main>
+</body></html>

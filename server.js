@@ -10,6 +10,7 @@ const { describeIndexes } = require('./document-indexes');
 const { searchBook, defaults: ragDefaults } = require('./document-search');
 const { compareRag } = require('./rag-comparison');
 const { parseHelp, prepareHelp } = require('./project-help');
+const support = require('./support-service');
 const mimeTypes = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'application/javascript; charset=utf-8' };
 
 // Loads local settings without adding a dependency. `.env` is intentionally gitignored.
@@ -67,7 +68,7 @@ async function readBody(request) {
   let size = 0;
   for await (const chunk of request) {
     size += chunk.length;
-    if (servicePolicy.enabled && size > servicePolicy.bodyBytes) throw fail('Слишком большой запрос.', 413);
+    if (size > (servicePolicy.enabled ? servicePolicy.bodyBytes : 131072)) throw fail('Слишком большой запрос.', 413);
     chunks.push(chunk);
   }
   return JSON.parse(Buffer.concat(chunks).toString('utf8'));
@@ -470,6 +471,26 @@ const server = http.createServer(async (request, response) => {
   }
   if (request.method === 'POST' && request.url === '/api/chat') return handleChat(request, response);
   if (request.method === 'POST' && request.url === '/api/chat/reset') return handleReset(request, response);
+
+  if (request.url.startsWith('/api/support/')) {
+    try {
+      if (servicePolicy.enabled) throw fail('Сервис поддержки требует DeepSeek и недоступен в режиме PRIVATE_LLM.', 503);
+      const url = new URL(request.url, 'http://localhost');
+      if (request.method === 'GET' && url.pathname === '/api/support/users')
+        return sendJson(response, 200, (await support.callSupport('list_users', {})).data);
+      if (request.method === 'GET' && url.pathname === '/api/support/tickets')
+        return sendJson(response, 200, (await support.callSupport('list_tickets', { userId: url.searchParams.get('userId') })).data);
+      if (request.method === 'GET' && url.pathname.startsWith('/api/support/source/')) {
+        const doc = support.knowledge().find(item => item.id === url.pathname.split('/').at(-1));
+        if (!doc) throw fail('Источник не найден.', 404);
+        response.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
+        return response.end(`${doc.title}\n\n${doc.text}`);
+      }
+      if (request.method === 'POST' && url.pathname === '/api/support/chat')
+        return sendJson(response, 200, await support.answerSupport(await readBody(request)));
+      return sendJson(response, 404, { error: 'Маршрут поддержки не найден.' });
+    } catch (error) { return sendJson(response, error.status || 502, { error: error.message }); }
+  }
 
   const pathname = request.url === '/' ? '/index.html' : request.url;
   const safePath = path.normalize(path.join(publicDir, pathname));
