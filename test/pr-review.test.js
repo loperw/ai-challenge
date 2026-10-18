@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
-const { collect, allowed } = require('../pr-review');
+const { collect, allowed, selectContext } = require('../pr-review');
 
 test('PR diff uses merge-base, committed files and code/documentation chunks', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'pr-review-'));
@@ -35,4 +35,17 @@ test('secret and generated locations are excluded', () => {
   for (const file of ['.env', 'data/trace.js', 'node_modules/a.js', 'keys/credentials.json', 'private-key.md']) assert.equal(allowed(file), false);
   assert.equal(allowed('docs/api.md'), true);
   assert.equal(allowed('agent.js'), true);
+});
+test('embedding scope preserves docs, dependencies and consumers without unrelated code', () => {
+  const code = (file, text) => ({ file, text, kind: 'code', line: 1, section: file });
+  const chunks = [
+    code('src/change.js', "const dep = require('./dep');"),
+    code('src/dep.js', "import './leaf.js';"),
+    code('src/leaf.js', 'export const value = 1;'),
+    code('consumer.js', "require('./src/change.js');"),
+    code('unrelated.js', 'console.log(1);'),
+    { file: 'docs/contracts.md', text: 'contract', kind: 'documentation' }
+  ];
+  assert.deepEqual(selectContext(chunks, ['src/change.js']).map(c => c.file),
+    ['src/change.js', 'src/dep.js', 'src/leaf.js', 'consumer.js', 'docs/contracts.md']);
 });

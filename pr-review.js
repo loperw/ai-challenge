@@ -15,6 +15,30 @@ function allowed(file) {
     && !/(^|\/)(\.env|.*(?:secret|credential|private-key).*)/i.test(file)
     && /\.(md|js|cjs|mjs|ts|tsx|jsx|py|yml|yaml|css|html)$/.test(file);
 }
+function selectContext(chunks, changed) {
+  const byFile = new Map();
+  for (const chunk of chunks) {
+    if (!byFile.has(chunk.file)) byFile.set(chunk.file, []);
+    byFile.get(chunk.file).push(chunk);
+  }
+  const dependencies = new Map();
+  for (const [file, parts] of byFile) {
+    const targets = new Set();
+    const text = parts.map(c => c.text).join('\n');
+    for (const match of text.matchAll(/(?:require\s*\(\s*|from\s+|import\s*\(\s*|import\s*)['"](\.{1,2}\/[^'"]+)['"]/g)) {
+      const name = path.posix.normalize(path.posix.join(path.posix.dirname(file), match[1]));
+      const target = [name, ...['.js', '.cjs', '.mjs', '.ts', '.tsx', '/index.js', '/index.ts'].map(ext => name + ext)]
+        .find(candidate => byFile.has(candidate));
+      if (target) targets.add(target);
+    }
+    dependencies.set(file, targets);
+  }
+  const selected = new Set(changed);
+  // Direct consumers provide call-site contracts; imports are followed transitively.
+  for (const [file, targets] of dependencies) if ([...targets].some(target => changed.includes(target))) selected.add(file);
+  for (const file of selected) for (const target of dependencies.get(file) || []) selected.add(target);
+  return chunks.filter(c => c.kind === 'documentation' || selected.has(c.file));
+}
 function collect(root, baseRef, headRef) {
   const base = resolve(root, baseRef), head = resolve(root, headRef);
   const ancestor = git(root, ['merge-base', base, head]).trim();
@@ -47,8 +71,11 @@ function collect(root, baseRef, headRef) {
     });
     flush();
   }
+  const selectedChunks = selectContext(chunks, files);
   return { base, head, ancestor, files, reviewed, skipped: files.filter(f => !allowed(f)),
-    truncated: raw.length > diff.length, diff, excluded, chunks, queries };
+    truncated: raw.length > diff.length, diff, excluded, chunks: selectedChunks, queries,
+    corpusScope: 'All documentation; changed code, static relative dependencies and direct consumers',
+    omittedCodeChunks: chunks.length - selectedChunks.length };
 }
 async function review({ root, base, head, output, apiKey = process.env.DEEPSEEK_API_KEY }) {
   if (!apiKey) throw new Error('DEEPSEEK_API_KEY is required');
@@ -88,11 +115,11 @@ async function review({ root, base, head, output, apiKey = process.env.DEEPSEEK_
   const result = await response.json();
   const choice = result.choices?.[0];
   if (choice?.finish_reason !== 'stop' || !choice.message?.content?.trim()) throw new Error('DeepSeek returned an incomplete or empty review');
-  const coverage = `Files: ${input.files.length}; reviewed extensions: ${input.reviewed.length}; diff truncated: ${input.truncated}; skipped: ${input.skipped.length}; RAG queries: ${queries.length}/${input.reviewed.length}; corpus exclusions: ${input.excluded.length}.`;
+  const coverage = `Files: ${input.files.length}; reviewed extensions: ${input.reviewed.length}; diff truncated: ${input.truncated}; skipped: ${input.skipped.length}; RAG queries: ${queries.length}/${input.reviewed.length}; corpus exclusions: ${input.excluded.length}. RAG scope: ${input.corpusScope}; unrelated code chunks omitted: ${input.omittedCodeChunks}.`;
   const markdown = `<!-- ai-pr-review -->\n## AI review · DeepSeek\n\nCommit: ${input.head}\n\n${coverage}\n\n${choice.message.content}\n`;
   fs.writeFileSync(path.join(output, 'review.md'), markdown);
   fs.writeFileSync(path.join(output, 'result.json'), JSON.stringify({ model: result.model, usage: result.usage,
     head: input.head, chunks: index.chunks.length, context: context.map(c => `${c.file}:${c.line}`), coverage }, null, 2));
   return markdown;
 }
-module.exports = { collect, allowed, review };
+module.exports = { collect, allowed, review, selectContext };
