@@ -9,6 +9,7 @@ const publicDir = path.join(__dirname, 'public');
 const { describeIndexes } = require('./document-indexes');
 const { searchBook, defaults: ragDefaults } = require('./document-search');
 const { compareRag } = require('./rag-comparison');
+const { parseHelp, prepareHelp } = require('./project-help');
 const mimeTypes = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'application/javascript; charset=utf-8' };
 
 // Loads local settings without adding a dependency. `.env` is intentionally gitignored.
@@ -151,6 +152,12 @@ async function handleChat(request, response) {
     if (settings.profileId && !store.getProfile(settings.profileId)) {
       return sendJson(response, 400, { error: 'Выбранный профиль не найден.' });
     }
+    const helpQuestion = parseHelp(body.message);
+    let help = null;
+    if (helpQuestion !== null) {
+      if (task || body.ephemeral) throw new AgentError('/help доступен в обычном чате.', 400);
+      help = await prepareHelp(helpQuestion, { compact: settings.provider === 'local', onTrace: trace => writeMcpTrace(response, trace) });
+    }
     const agent = body.ephemeral
       ? new Agent(settings, {
         getProfile: profileId => store.getProfile(profileId),
@@ -158,13 +165,15 @@ async function handleChat(request, response) {
       })
       : agents.get(body.conversationId, settings);
 
-    const useDocuments = !body.ephemeral && !task && Boolean(body.documentStrategy);
+    const useDocuments = helpQuestion === null && !body.ephemeral && !task && Boolean(body.documentStrategy);
     await agent.respond(body.message, {
+      projectHelpContext: help?.prompt || '',
+      projectHelpQuestion: helpQuestion || '',
       retrieveDocuments: useDocuments ? (query, taskMemory) => searchBook(query, body.documentStrategy, body.retrievalOptions, { settings, taskMemory }) : null,
-      ragMode: !body.ephemeral && !task ? (useDocuments ? 'rag' : 'plain') : null,
+      ragMode: help ? 'project-rag' : !body.ephemeral && !task ? (useDocuments ? 'rag' : 'plain') : null,
       onStart: () => startStream(response),
       onToken: token => writeToken(response, token),
-      toolsEnabled: !useDocuments && !body.ephemeral && (!task || task.stage === 'execution'),
+      toolsEnabled: helpQuestion === null && !useDocuments && !body.ephemeral && (!task || task.stage === 'execution'),
       onTrace: trace => writeMcpTrace(response, trace),
       onToolResult: (name, result) => {
         if (!result.isError && result.structuredContent?.file) {
@@ -177,6 +186,7 @@ async function handleChat(request, response) {
       hiddenUserMessage: Boolean(task && body.taskAction),
       displayUserMessage: task && body.taskAction ? body.taskActionLabel : ''
     });
+    if (help) (await mcpClientPromise).completeAgentTrace(help.trace, trace => writeMcpTrace(response, trace));
     response.write(`data: ${JSON.stringify({ tokenStats: agent.tokenStats, context: agent.context, messages: agent.messages })}\n\n`);
     response.end('data: [DONE]\n\n');
   } catch (error) {

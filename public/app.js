@@ -708,11 +708,16 @@ function renderMcpTrace() {
     : trace.server ? `${trace.server.name} · v${trace.server.version}` : 'MCP stdio · подключение';
   const tool = document.createElement('strong'); tool.textContent = trace.calls?.length
     ? trace.calls.map(call => call.name).join(' → ')
-    : trace.status === 'done' ? 'Ответ без инструментов' : trace.tool?.name || 'Выбор инструмента…';
+    : trace.tool?.name || (trace.status === 'done' ? 'Ответ без инструментов' : 'Выбор инструмента…');
   identity.append(label, tool);
   const status = document.createElement('span'); status.className = `mcp-status ${trace.status}`;
   status.textContent = trace.status === 'done' ? 'Готово' : trace.status === 'error' ? 'Ошибка' : 'Вызов…';
   header.append(identity, status); root.append(header);
+  if (trace.tool?.name === 'git_context' && trace.result) {
+    const explanation = document.createElement('p'); explanation.className = 'mcp-data-label';
+    explanation.textContent = `Приложение вызвало git_context через MCP для команды /help. Текущая ветка: ${trace.result.branch || 'detached HEAD (ветки нет)'}. Результат передан модели вместе с документацией проекта.`;
+    root.append(explanation);
+  }
   if (trace.transfers?.length) {
     const details = document.createElement('details');
     const title = document.createElement('summary'); title.textContent = 'Передача данных между серверами';

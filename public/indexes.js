@@ -56,7 +56,7 @@
     if (!result && !ragMode) return;
     const block = document.createElement('section'); block.className = 'document-sources';
     const heading = document.createElement('h4');
-    heading.textContent = result ? `С RAG · ${result.strategy === 'fixed' ? 'Фиксированный размер' : 'По структуре'}` : ragMode === 'rag' ? 'С RAG' : 'Без RAG';
+    heading.textContent = result ? `С RAG · ${result.strategy === 'fixed' ? 'Фиксированный размер' : 'По структуре'}` : ragMode === 'project-rag' ? 'С RAG · Документация проекта' : ragMode === 'rag' ? 'С RAG' : 'Без RAG';
     if (!result) { block.append(heading); container.append(block); return; }
     const note = document.createElement('p'); note.textContent = result.answerStatus === 'unknown'
       ? 'Не знаю. Подтверждающего контекста недостаточно; уточните вопрос.'

@@ -6,6 +6,8 @@
     "node": ">=22.5.0"
   },
   "scripts": {
+    "index:project": "node scripts/index-project.cjs",
+    "eval:project-help": "node scripts/verify-project-help.cjs",
     "start": "node server.js",
     "mcp:list": "node scripts/list-mcp.mjs",
     "eval:multi-mcp": "node scripts/eval-multi-mcp.mjs",
