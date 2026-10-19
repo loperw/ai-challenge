@@ -1,5 +1,5 @@
 import './env.mjs';
-import { ticketSelectionUrl } from './ticket-booking.mjs';
+import { ticketSelectionUrl, telegramSelectionUrl } from './ticket-booking.mjs';
 
 const DEFAULT_RAILWAY_URL = 'https://pass.rw.by';
 
@@ -83,7 +83,8 @@ export function parseOfficialSchedule(sourceHtml, criteria, baseUrl = DEFAULT_RA
     return {
       trainNumber: decodeHtml(trainNumber), trainName: '', from: decodeHtml(from), to: decodeHtml(to),
       date: criteria.date, departureTime, arrivalTime, availableSeats: seats,
-      url: bookingForm ? ticketSelectionUrl(criteria, { trainNumber, departureTime }) : officialScheduleUrl(criteria, baseUrl)
+      url: bookingForm ? ticketSelectionUrl(criteria, { trainNumber, departureTime }) : officialScheduleUrl(criteria, baseUrl),
+      telegramUrl: bookingForm ? telegramSelectionUrl(bookingForm, criteria, { trainNumber, departureTime }) : null
     };
   }).filter(Boolean);
 }

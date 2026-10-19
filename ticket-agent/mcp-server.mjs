@@ -2,7 +2,7 @@ import readline from 'node:readline';
 import { searchTickets, applyInvariants } from './lib/railway.mjs';
 import { sendTelegramNotification } from './lib/telegram.mjs';
 import { buildTicketNotification } from './lib/ticket-notification.mjs';
-import { monitorSnapshot, summarizeMonitorChange } from './lib/monitor-summary.mjs';
+import { monitorSnapshot } from './lib/monitor-summary.mjs';
 
 const tools = [
   {
@@ -68,33 +68,15 @@ async function checkMonitor(monitor) {
     const snapshot = monitorSnapshot(trains);
     const signature = JSON.stringify(snapshot);
     if (signature === monitor.lastSignature || (!trains.length && monitor.lastSnapshot === null)) {
-      monitor.pendingSummary = null;
       return;
     }
-    if (monitor.pendingSummary?.signature !== signature) {
-      let summary;
-      let aiError = null;
-      try {
-        summary = await summarizeMonitorChange(monitor.criteria, monitor.lastSnapshot, snapshot);
-      } catch {
-        // A model outage must not suppress the actual ticket notification.
-        aiError = 'Не удалось получить итог DeepSeek. Уведомление содержит данные источника.';
-        summary = null;
-      }
-      monitor.pendingSummary = { signature, summary, aiError };
-    }
-    if (monitors.get(monitor.id) !== monitor) return;
-    const { summary, aiError } = monitor.pendingSummary;
     await sendTelegramNotification({
       chatId: monitor.chatId,
-      ...buildTicketNotification(monitor.criteria, trains, monitor.name, { summary })
+      ...buildTicketNotification(monitor.criteria, trains, monitor.name)
     });
     if (monitors.get(monitor.id) === monitor) {
       monitor.lastSignature = signature;
       monitor.lastSnapshot = snapshot;
-      monitor.lastSummary = summary;
-      monitor.lastAiError = aiError;
-      monitor.pendingSummary = null;
     }
   } catch (error) {
     monitor.lastChecked = new Date().toISOString();
@@ -111,8 +93,15 @@ async function callTool(name, args) {
   }
   if (name === 'start_monitoring') {
     const everySeconds = Math.max(30, Math.min(3600, Number(args.everySeconds) || 300));
+    const chatId = String(args.chatId);
+    const monitorName = String(args.name || '');
+    const existing = [...monitors.values()].find((monitor) =>
+      monitor.chatId === chatId && monitor.name === monitorName && monitor.everySeconds === everySeconds &&
+      JSON.stringify(monitor.criteria) === JSON.stringify(args.criteria)
+    );
+    if (existing) return { id: existing.id, everySeconds, status: 'running', alreadyRunning: true };
     const id = crypto.randomUUID();
-    const monitor = { id, criteria: args.criteria, chatId: String(args.chatId), name: String(args.name || ''), everySeconds, lastChecked: null, lastCount: 0, lastError: null, lastSignature: '', lastSnapshot: null, lastSummary: null, lastAiError: null, pendingSummary: null };
+    const monitor = { id, criteria: args.criteria, chatId, name: monitorName, everySeconds, lastChecked: null, lastCount: 0, lastError: null, lastSignature: '', lastSnapshot: null };
     monitor.timer = setInterval(() => checkMonitor(monitor), everySeconds * 1000);
     monitor.timer.unref?.();
     monitors.set(id, monitor);
@@ -126,7 +115,7 @@ async function callTool(name, args) {
     return { stopped: true };
   }
   if (name === 'list_monitors') {
-    return { monitors: [...monitors.values()].map(({ id, everySeconds, lastChecked, lastCount, lastError, lastSummary, lastAiError }) => ({ id, everySeconds, lastChecked, lastCount, lastError, lastSummary, lastAiError })) };
+    return { monitors: [...monitors.values()].map(({ id, everySeconds, lastChecked, lastCount, lastError }) => ({ id, everySeconds, lastChecked, lastCount, lastError })) };
   }
   if (name === 'send_telegram_notification') return sendTelegramNotification(args);
   throw new Error(`Неизвестный инструмент: ${name}`);

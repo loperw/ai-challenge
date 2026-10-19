@@ -46,7 +46,7 @@ test('prices stay paired with their seat type and tariff, including unnamed cont
   assert.deepEqual(filtered.availableSeats.map(({ price }) => price), ['48,48 BYN', 'от 61,98 BYN']);
 });
 
-test('Telegram shows prices and labels with correct link offsets even after emoji and special characters', () => {
+test('Telegram shows prices and compact source buttons after emoji and special characters', () => {
   const [train] = parseOfficialSchedule(html, criteria);
   const trains = [train, { ...train, trainNumber: '123Б', url: 'https://pass.rw.by/ru/train/?train=123Б' }];
   const message = buildTicketNotification(criteria, trains, 'Артём 🚆 <&>');
@@ -55,16 +55,16 @@ test('Telegram shows prices and labels with correct link offsets even after emoj
   assert.ok(message.text.includes('купе · мест: 2 · от 61,98 BYN'));
   assert.ok(message.text.includes('СВ · мест: 1 · цена не указана'));
   assert.ok(!message.text.includes('https://'));
-  assert.equal(message.entities.length, 2);
-  for (const [index, entity] of message.entities.entries()) {
-    assert.equal(entity.type, 'text_link');
-    assert.equal(message.text.slice(entity.offset, entity.offset + entity.length), 'Открыть источник');
-    assert.equal(entity.url, new URL(trains[index].url).href);
+  assert.equal(message.reply_markup.inline_keyboard.length, 2);
+  for (const [index, [button]] of message.reply_markup.inline_keyboard.entries()) {
+    assert.equal(button.text, 'Открыть источник');
+    assert.equal(button.url, new URL(trains[index].telegramUrl || trains[index].url).href);
   }
-  assert.equal(buildTicketNotification(criteria, [{ ...train, url: 'javascript:alert(1)' }]).entities.length, 0);
+  const unsafe = buildTicketNotification(criteria, [{ ...train, url: 'javascript:alert(1)', telegramUrl: null }]);
+  assert.equal(unsafe.reply_markup, undefined);
 });
 
-test('Telegram transport preserves link entities and still accepts plain test notifications', async (t) => {
+test('Telegram transport preserves source buttons and still accepts plain test notifications', async (t) => {
   const bodies = [];
   t.mock.method(globalThis, 'fetch', async (_url, options) => {
     bodies.push(JSON.parse(options.body));
@@ -79,9 +79,9 @@ test('Telegram transport preserves link entities and still accepts plain test no
   const message = buildTicketNotification(criteria, parseOfficialSchedule(html, criteria));
   await sendTelegramNotification({ chatId: 'test-only-chat', ...message });
   await sendTelegramNotification({ chatId: 'test-only-chat', text: 'Тест' });
-  assert.deepEqual(bodies[0].entities, message.entities);
+  assert.deepEqual(bodies[0].reply_markup, message.reply_markup);
   assert.equal(bodies[0].text, message.text);
   assert.equal(bodies[0].disable_web_page_preview, true);
   assert.equal(bodies[1].text, 'Тест');
-  assert.ok(!Object.hasOwn(bodies[1], 'entities'));
+  assert.ok(!Object.hasOwn(bodies[1], 'reply_markup'));
 });

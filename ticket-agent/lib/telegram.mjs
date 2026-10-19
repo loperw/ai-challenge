@@ -1,13 +1,18 @@
 import './env.mjs';
 
-export async function sendTelegramNotification({ chatId, text, entities }) {
+export async function sendTelegramNotification({ chatId, text, reply_markup }) {
   const token = process.env.TELEGRAM_BOT_TOKEN;
   if (!token) throw new Error('TELEGRAM_BOT_TOKEN не задан в локальном .env.');
   if (!chatId) throw new Error('Не задан Telegram chat ID.');
   const response = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ chat_id: chatId, text, entities, disable_web_page_preview: true }),
+    body: JSON.stringify({
+      chat_id: chatId,
+      text,
+      ...(reply_markup ? { reply_markup } : {}),
+      disable_web_page_preview: true
+    }),
     signal: AbortSignal.timeout(12000)
   });
   const result = await response.json();

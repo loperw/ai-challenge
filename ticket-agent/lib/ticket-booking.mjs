@@ -1,4 +1,25 @@
 import './env.mjs';
+import { deflateSync } from 'node:zlib';
+
+export function telegramSelectionUrl(form, criteria, train) {
+  const configuredUrl = process.env.TICKET_AGENT_LINK_PAGE_URL;
+  if (!configuredUrl) return null;
+  const url = new URL(configuredUrl);
+  if (url.protocol !== 'https:' || url.username || url.password) {
+    throw new Error('TICKET_AGENT_LINK_PAGE_URL должен быть публичным HTTPS-адресом страницы выбора мест.');
+  }
+  if (new URL(form.action).href !== 'https://pass.rw.by/ru/order/places/') return null;
+  // The fragment stays in the browser: only public train/form data is included.
+  const payload = JSON.stringify({
+    version: 1,
+    route: form.fields.route,
+    returnUrl: form.fields.url || '/ru/route/',
+    train: String(train.trainNumber), date: String(criteria.date), departure: String(train.departureTime)
+  });
+  // Keep Telegram's button payload small while preserving the BZhD POST form.
+  url.hash = `z${deflateSync(Buffer.from(payload, 'utf8')).toString('base64url')}`;
+  return url.href;
+}
 
 export function ticketSelectionUrl(criteria, train) {
   const appUrl = process.env.TICKET_AGENT_PUBLIC_URL || `http://127.0.0.1:${Number(process.env.TICKET_AGENT_PORT) || 3035}`;

@@ -22,7 +22,8 @@ test('result and Telegram links retain train, route, date and departure without 
     from: 'Минск', to: 'Витебск', date: '2026-10-23', train: '704Б', departure: '07:00'
   });
   assert.ok(!train.url.includes('route-payload'));
-  assert.equal(buildTicketNotification(criteria, [train]).entities[0].url, train.url);
+  const [[sourceButton]] = buildTicketNotification(criteria, [train]).reply_markup.inline_keyboard;
+  assert.equal(sourceButton.url, train.telegramUrl || train.url);
 });
 
 test('selection uses the current form of exactly the requested departure and preserves encoded fields', () => {
