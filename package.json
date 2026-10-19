@@ -18,7 +18,9 @@
     "compare:chunking": "node scripts/document-index.cjs compare",
     "eval:rag": "node scripts/eval-rag.mjs",
     "eval:local-rag": "node scripts/eval-local-rag.cjs",
-    "test": "node --test"
+    "test": "node --test",
+    "test:files": "node --test test/workspace-files.test.js test/workspace-ui.test.js",
+    "eval:files": "node scripts/eval-file-assistant.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/client": "^2.1.0",

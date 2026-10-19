@@ -1,5 +1,6 @@
 {
   "servers": [
+    { "id": "workspace", "role": "workspace", "enabled": true },
     { "id": "maps", "role": "maps", "enabled": true },
     { "id": "weather", "role": "weather", "enabled": true },
     { "id": "documents", "role": "documents", "enabled": true },

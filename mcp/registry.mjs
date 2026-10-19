@@ -21,7 +21,7 @@ export async function openMultiMcpSession({ registry, env = {}, stderr = 'inheri
   const ids = new Set();
   for (const entry of entries) {
     if (!/^[a-z][a-z0-9_]{0,19}$/.test(entry.id) || ids.has(entry.id)) throw new Error('Invalid or duplicate MCP server id.');
-    if (!['maps', 'weather', 'documents', 'schedules'].includes(entry.role)) throw new Error(`Unknown MCP role: ${entry.role}`);
+    if (!['maps', 'weather', 'documents', 'schedules', 'workspace'].includes(entry.role)) throw new Error(`Unknown MCP role: ${entry.role}`);
     ids.add(entry.id);
   }
   const sessions = new Map(), routes = new Map(), sources = new Map(), imported = new Set();

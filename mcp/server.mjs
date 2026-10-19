@@ -1,6 +1,7 @@
 import { McpServer } from '@modelcontextprotocol/server';
 import { StdioServerTransport } from '@modelcontextprotocol/server/stdio';
 import { z } from 'zod';
+import { registerWorkspaceTools } from './workspace-tools.mjs';
 import { randomUUID } from 'node:crypto';
 
 import { getWeather, weatherOutputSchema, weatherText } from './weather.mjs';
@@ -9,7 +10,7 @@ import { registerPipelineTools } from './pipeline-tools.mjs';
 import { registerMapsTools } from './maps.mjs';
 
 const role = process.argv[2] || 'legacy';
-if (!['legacy', 'weather', 'maps', 'documents', 'schedules'].includes(role)) throw new Error(`Unknown MCP role: ${role}`);
+if (!['legacy', 'weather', 'maps', 'documents', 'schedules', 'workspace'].includes(role)) throw new Error(`Unknown MCP role: ${role}`);
 const server = new McpServer({ name: role === 'legacy' ? 'open-meteo-weather' : `agent-${role}`, version: '1.0.0' });
 const artifacts = new Map();
 
@@ -39,4 +40,5 @@ if (['legacy', 'weather'].includes(role)) server.registerTool('get_weather', {
 if (['legacy', 'schedules'].includes(role)) registerSchedulerTools(server);
 if (['legacy', 'documents'].includes(role)) registerPipelineTools(server, { artifacts, allowImport: role === 'documents' });
 if (role === 'maps') registerMapsTools(server);
+if (role === 'workspace') registerWorkspaceTools(server);
 await server.connect(new StdioServerTransport());

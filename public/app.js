@@ -287,7 +287,7 @@ function renderChat() {
   renderWorkspaceMode();
   renderMcpTrace();
   messagesEl.innerHTML = '';
-  visibleMessages(chat).forEach(message => addMessage(message.role, message.content, message.pending, message.memoryCommand, message.memoryType, message.invariantRefusal, message.files, message.documentSearch, message.ragMode));
+  visibleMessages(chat).forEach(message => addMessage(message.role, message.content, message.pending, message.memoryCommand, message.memoryType, message.invariantRefusal, message.files, message.documentSearch, message.ragMode, message.proposals, message.reports));
   if (!visibleMessages(chat).length) {
     const empty = document.createElement('div'); empty.className = 'empty-chat'; empty.textContent = 'Чем помочь?'; messagesEl.append(empty);
   }
@@ -441,7 +441,7 @@ function setInvariantRefusalMark(item, enabled) {
   body.insertBefore(badge, body.querySelector('.bubble'));
 }
 
-function addMessage(role, content, pending = false, memoryCommand = false, memoryType = '', invariantRefusal = false, files = [], documentSearch = null, ragMode = null) {
+function addMessage(role, content, pending = false, memoryCommand = false, memoryType = '', invariantRefusal = false, files = [], documentSearch = null, ragMode = null, proposals = [], reports = []) {
   const item = document.createElement('article'); item.className = `message ${role}${memoryCommand ? ' memory-command' : ''}`;
   const avatar = document.createElement('div'); avatar.className = 'avatar'; avatar.textContent = role === 'assistant' ? 'A' : 'Я';
   const bubble = document.createElement('div'); bubble.className = `bubble${pending ? ' typing' : ''}`; bubble.textContent = content;
@@ -454,6 +454,9 @@ function addMessage(role, content, pending = false, memoryCommand = false, memor
     const author = document.createElement('span'); author.className = 'message-author'; author.textContent = 'Агент';
     body.append(author, bubble); item.append(avatar, body);
     renderFileCards(item, files);
+    renderProposals(item, proposals);
+    renderReports(item, reports);
+    if (!pending && !memoryCommand) renderAnswer(bubble, content);
     window.renderDocumentSources(body, documentSearch, ragMode);
     setInvariantRefusalMark(item, Boolean(invariantRefusal));
   } else item.append(avatar, bubble);
@@ -1106,6 +1109,8 @@ async function sendConversationMessage(text, { taskAction = false, taskActionLab
       assistantMessage.invariantRefusal = Boolean(savedAssistantMessage?.invariantRefusal);
       assistantMessage.documentSearch = savedAssistantMessage?.documentSearch || null;
       assistantMessage.ragMode = savedAssistantMessage?.ragMode || null;
+      assistantMessage.proposals = savedAssistantMessage?.proposals || [];
+      assistantMessage.reports = savedAssistantMessage?.reports || [];
       assistantMessage.files = savedAssistantMessage?.files || assistantMessage.files || [];
     }, trace => {
       chat.mcpTrace = trace;
@@ -1116,8 +1121,8 @@ async function sendConversationMessage(text, { taskAction = false, taskActionLab
       if (!assistantMessage.files.some(item => item.name === file.name)) assistantMessage.files.push(file);
     });
     if (!answer) throw new Error('Сервис не вернул текст ответа.');
-    chat.history.push({ role: 'assistant', content: answer, invariantRefusal: assistantMessage.invariantRefusal, files: assistantMessage.files, documentSearch: assistantMessage.documentSearch, ragMode: assistantMessage.ragMode });
-    chat.memory.shortTerm.push({ role: 'assistant', content: answer, invariantRefusal: assistantMessage.invariantRefusal, files: assistantMessage.files, documentSearch: assistantMessage.documentSearch, ragMode: assistantMessage.ragMode });
+    chat.history.push({ role: 'assistant', content: answer, invariantRefusal: assistantMessage.invariantRefusal, files: assistantMessage.files, proposals: assistantMessage.proposals, reports: assistantMessage.reports, documentSearch: assistantMessage.documentSearch, ragMode: assistantMessage.ragMode });
+    chat.memory.shortTerm.push({ role: 'assistant', content: answer, invariantRefusal: assistantMessage.invariantRefusal, files: assistantMessage.files, proposals: assistantMessage.proposals, reports: assistantMessage.reports, documentSearch: assistantMessage.documentSearch, ragMode: assistantMessage.ragMode });
     if (settings.contextStrategy !== 'branching') {
       const recentDialogue = chat.history.filter(message => !message.memoryCommand).slice(-Number(settings.keepMessages));
       chat.history = chat.history.filter(message => message.memoryCommand || recentDialogue.includes(message));
@@ -1129,9 +1134,11 @@ async function sendConversationMessage(text, { taskAction = false, taskActionLab
     if (isActive()) {
       const follow = messagesEl.scrollHeight - messagesEl.scrollTop - messagesEl.clientHeight < 80;
       const bubble = messagesEl.lastElementChild.querySelector('.bubble');
-      bubble.textContent = assistantMessage.content;
+      renderAnswer(bubble, assistantMessage.content);
       bubble.classList.remove('typing');
       renderFileCards(messagesEl.lastElementChild, assistantMessage.files);
+      renderProposals(messagesEl.lastElementChild, assistantMessage.proposals);
+      renderReports(messagesEl.lastElementChild, assistantMessage.reports);
       window.renderDocumentSources(messagesEl.lastElementChild.querySelector('.message-body'), assistantMessage.documentSearch, assistantMessage.ragMode);
       setInvariantRefusalMark(messagesEl.lastElementChild, Boolean(assistantMessage.invariantRefusal));
       messagesEl.lastElementChild.classList.remove('task-action-running');
@@ -1341,3 +1348,62 @@ document.querySelector('#reviseForm').addEventListener('submit', async event => 
   event.preventDefault(); const reason = document.querySelector('#reviseReason').value.trim(); if (!reason) return;
   closeReviseModal(); await runTaskAction({ revision: reason });
 });
+
+function renderProposals(item, proposals = []) {
+  const body = item.querySelector('.message-body');
+  body.querySelector('.file-proposals')?.remove();
+  if (!proposals.length) return;
+  const container = document.createElement('div'); container.className = 'file-proposals';
+  const conversationId = currentChat().id;
+  for (const proposal of proposals) {
+    const panel = document.createElement('section');
+    const diff = document.createElement('div'); diff.className = 'workspace-diff-view'; WorkspaceDiff.render(diff, proposal);
+    const question = document.createElement('p');
+    const labels = { applied: 'Изменения сохранены.', rejected: 'Изменения отменены.', unchanged: 'Изменений нет.', conflict: 'Файлы изменились. Запросите новый diff.', failed: 'Не удалось сохранить все файлы. Запросите новый diff.' };
+    const confirmation = proposal.purpose === 'documentation_update'
+      ? 'Исправить устаревшие сведения и сохранить изменения?'
+      : proposal.entries?.every(entry => entry.before === null)
+        ? 'Создать показанные файлы?'
+        : 'Сохранить показанные изменения?';
+    question.textContent = labels[proposal.status] || confirmation;
+    panel.append(diff, question);
+    if (proposal.status === 'pending') {
+      const buttons = [];
+      for (const [label, approve] of [['Да', true], ['Нет', false]]) {
+        const button = document.createElement('button'); button.type = 'button'; button.textContent = label; buttons.push(button); panel.append(button);
+        button.addEventListener('click', async () => {
+          buttons.forEach(button => button.disabled = true);
+          try {
+            const response = await apiFetch('/api/workspace/decision', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ conversationId, id: proposal.id, approve }) });
+            const result = await response.json();
+            if (!response.ok) throw new Error(result.error);
+            Object.assign(proposal, result.proposal);
+            question.textContent = labels[proposal.status] || proposal.status;
+            saveChats();
+          } catch (error) { question.textContent = error.message; buttons.forEach(button => button.disabled = false); }
+        });
+      }
+    }
+    container.append(panel);
+  }
+  body.append(container);
+}
+
+function renderAnswer(bubble, text = '') {
+  if (/^#{1,6}\s|\*\*[^*]+\*\*|^\|.+\|/m.test(text)) {
+    FilePreview.render(bubble, text);
+  } else bubble.textContent = text;
+}
+function renderReports(item, reports = []) {
+  const body = item.querySelector('.message-body');
+  body.querySelector('.workspace-reports')?.remove();
+  if (!reports.length) return;
+  const container = document.createElement('div'); container.className = 'workspace-reports';
+  for (const report of reports) {
+    const section = document.createElement('section');
+    const title = document.createElement('p'); title.className = 'workspace-report-path'; title.textContent = 'Отчёт · ' + report.path;
+    const preview = document.createElement('div'); FilePreview.render(preview, report.text);
+    section.append(title, preview); container.append(section);
+  }
+  body.append(container);
+}

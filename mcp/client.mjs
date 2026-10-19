@@ -7,7 +7,7 @@ const defaultServerPath = fileURLToPath(new URL('./server.mjs', import.meta.url)
 function clientConnection({ command = process.execPath, args = [defaultServerPath], cwd = process.cwd(), stderr = 'inherit', env = {} } = {}) {
   const client = new Client({ name: 'agent-chat-mcp-client', version: '1.0.0' });
   const transport = new StdioClientTransport({ command, args, cwd, stderr,
-    env: { ...Object.fromEntries(['SCHEDULE_DB_PATH', 'PIPELINE_SEARCH_FILE', 'PIPELINE_OUTPUT_DIR']
+    env: { ...Object.fromEntries(['FILE_WORKSPACE_ROOT', 'SCHEDULE_DB_PATH', 'PIPELINE_SEARCH_FILE', 'PIPELINE_OUTPUT_DIR']
       .filter(key => process.env[key]).map(key => [key, process.env[key]])), ...env } });
   return { client, transport };
 }

@@ -65,7 +65,7 @@ test('Agent routes an eight-call flow through four real stdio servers and preser
   await agent.respond('Маршрут, погода, итог, файл и список расписаний', { onTrace: value => { trace = value; } });
   assert.deepEqual(trace.calls.map(call => call.name), names);
   assert.deepEqual(trace.calls.map(call => call.serverId), ['maps', 'maps', 'maps', 'weather', 'documents', 'documents', 'documents', 'schedules']);
-  assert.equal(trace.servers.filter(s => s.status === 'connected').length, 4);
+  assert.equal(trace.servers.filter(s => s.status === 'connected').length, 5);
   assert.deepEqual(trace.transfers.map(item => item.from), ['maps', 'weather']);
   assert.equal(data[4].text, data[2].text + '\n\n' + data[3].text);
   assert.equal(await fs.readFile(path.join(dir, 'trip.md'), 'utf8'), data[5].text);

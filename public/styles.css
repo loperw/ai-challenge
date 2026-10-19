@@ -286,3 +286,30 @@ html, body { height:100%; overflow:hidden; }
 .task-memory-dialog .profile-form-body { min-height:0; }
 .task-memory-dialog .field > span { font-size:12px; }
 .task-memory-dialog .profile-form-body textarea { min-height:58px; font-size:12px; }
+
+.workspace-diff { white-space: pre; overflow: auto; max-height: 420px; max-width: 100%; padding: 16px; background: #111827; color: #e5e7eb; border-radius: 10px; font-size: 12px; }
+.file-proposals button { margin: 0 12px 12px 0; padding: 8px 24px; }
+
+.workspace-reports { margin-top: 18px; min-width: 0; }
+.workspace-report-path { color: #7c8492; font-size: 12px; overflow-wrap: anywhere; }
+.bubble:has(.preview-document) { white-space: normal; }
+.bubble > .preview-document { background: transparent; border: 0; box-shadow: none; padding: 0; }
+.workspace-reports .preview-document { overflow-wrap: anywhere; }
+
+.workspace-diff-view { margin: 16px 0; min-width: 0; }
+.diff-file { margin-bottom: 16px; border: 1px solid #d0d7de; border-radius: 8px; overflow: hidden; background: white; }
+.diff-file-header { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 12px 16px; background: #f6f8fa; border-bottom: 1px solid #d0d7de; font-size: 12px; }
+.diff-file-name { flex: 1; overflow-wrap: anywhere; color: #24292f; }
+.diff-added-count { color: #1a7f37; }.diff-removed-count { color: #cf222e; }
+.file-proposals .diff-view-toggle { margin: 0; padding: 5px 8px; font-size: 11px; }
+.diff-lines { overflow: auto; max-height: 520px; }
+.diff-line { display: grid; grid-template-columns: 36px 36px 24px minmax(160px, 1fr); min-height: 26px; font: 12px/1.7 ui-monospace, Consolas, monospace; }
+.diff-add { background: #dafbe1; }.diff-remove { background: #ffebe9; }.diff-context { background: #fff; }
+.diff-line-number { text-align: right; padding: 3px 6px; color: #656d76; user-select: none; border-right: 1px solid #d0d7de55; }
+.diff-sign { text-align: center; padding-top: 3px; user-select: none; }
+.diff-add .diff-sign { color: #1a7f37; }.diff-remove .diff-sign { color: #cf222e; }
+.diff-line-content { white-space: pre-wrap; overflow-wrap: anywhere; padding: 3px 10px; color: #24292f; }
+.diff-line-content .preview-document { padding: 0; margin: 0; border: 0; border-radius: 0; background: transparent; box-shadow: none; font-size: 13px; line-height: 1.6; }
+.diff-line-content .preview-document p, .diff-line-content .preview-document ul, .diff-line-content .preview-document ol { margin: 0; }
+.diff-line-content .preview-document h2, .diff-line-content .preview-document h3 { margin: 0; font-size: 15px; }
+.diff-line-content .preview-document li { margin: 0; }

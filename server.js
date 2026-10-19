@@ -32,6 +32,8 @@ const store = new SQLiteStore(process.env.AGENT_DB_PATH || path.join(__dirname, 
   legacyMemoryPath: process.env.AGENT_DB_PATH ? undefined : path.join(__dirname, 'data', 'memory.json')
 });
 const memoryStore = store;
+const fileProposals = new Map();
+const workspacePromise = import('./workspace-files.mjs');
 const openToolSession = async () => (await import('./mcp/registry.mjs')).openMultiMcpSession();
 const { extractTaskMemory } = require('./task-memory');
 const agents = new AgentRegistry({ store, memoryStore, openToolSession, extractTaskMemory });
@@ -177,6 +179,10 @@ async function handleChat(request, response) {
       toolsEnabled: helpQuestion === null && !useDocuments && !body.ephemeral && (!task || task.stage === 'execution'),
       onTrace: trace => writeMcpTrace(response, trace),
       onToolResult: (name, result) => {
+        if (!result.isError && result.structuredContent?.proposal) {
+          const proposal = result.structuredContent.proposal;
+          fileProposals.set(proposal.id, { conversationId: body.conversationId, proposal });
+        }
         if (!result.isError && result.structuredContent?.file) {
           response.write(`data: ${JSON.stringify({ fileCreated: result.structuredContent.file })}\n\n`);
         }
@@ -228,6 +234,22 @@ const server = http.createServer(async (request, response) => {
       response.setHeader('Retry-After', '60');
       return sendJson(response, 429, { error: 'Лимит: 12 запросов в минуту с одного адреса.' });
     }
+  }
+  if (request.method === 'POST' && request.url === '/api/workspace/decision') {
+    try {
+      const origin = request.headers.origin;
+      if (origin && origin !== 'http://' + request.headers.host && origin !== 'https://' + request.headers.host) return sendJson(response, 403, { error: 'Запрос с другого сайта запрещен.' });
+      const body = await readBody(request);
+      const record = fileProposals.get(body.id);
+      if (!record || record.conversationId !== body.conversationId) return sendJson(response, 404, { error: 'Предложение недоступно. После перезапуска сервера запросите новый diff.' });
+      const { WorkspaceFiles } = await workspacePromise;
+      try { await new WorkspaceFiles().decide(record.proposal, body.approve); }
+      finally {
+        const agent = agents.agents.get(body.conversationId);
+        if (agent) agent.persist(agent.settings, agent.messages, agent.tokenStats, agent.context);
+      }
+      return sendJson(response, 200, { proposal: record.proposal });
+    } catch (error) { return sendJson(response, 409, { error: error.message }); }
   }
   if (request.method === 'GET' && request.url === '/api/health') return sendJson(response, 200, { ok: true, localOnly: servicePolicy.enabled });
   if (request.method === 'GET' && request.url === '/runtime-config.js') {

@@ -448,6 +448,8 @@ ${invariants.map((item, index) => `${index + 1}. ${item}`).join('\n')}
     this.messages.push({ role: 'user', content, ...(hiddenUserMessage && { hidden: true }) });
     let answer = '';
     const files = [];
+    const proposals = [];
+    const reports = [];
     const previousStats = this.tokenStats;
     const previousContext = structuredClone(this.context);
     this.completionUsage = {};
@@ -510,6 +512,8 @@ ${invariants.map((item, index) => `${index + 1}. ${item}`).join('\n')}
         answer = await runToolLoop(this, { openSession: this.openToolSession, onTrace, onResult: (name, result) => {
           const file = !result.isError && result.structuredContent?.file;
           if (file && !files.some(item => item.downloadUrl === file.downloadUrl)) files.push(file);
+          if (!result.isError && result.structuredContent?.proposal) proposals.push(result.structuredContent.proposal);
+          if (!result.isError && result.structuredContent?.report) reports.push(result.structuredContent.report);
           onToolResult(name, result);
         } });
         if (!guarded) onToken(answer);
@@ -552,7 +556,7 @@ ${invariants.map((item, index) => `${index + 1}. ${item}`).join('\n')}
       }
       if (documentSearch) documentSearch = this.documentSearch;
       const invariantRefusal = this.context.lastInvariantCheck?.status === 'conflict';
-      this.messages.push({ role: 'assistant', content: answer, ...(ragMode && { ragMode }), ...(files.length && { files }), ...(invariantRefusal && { invariantRefusal: true }), ...(!invariantRefusal && documentSearch && { documentSearch }) });
+      this.messages.push({ role: 'assistant', content: answer, ...(ragMode && { ragMode }), ...(files.length && { files }), ...(proposals.length && { proposals }), ...(reports.length && { reports }), ...(invariantRefusal && { invariantRefusal: true }), ...(!invariantRefusal && documentSearch && { documentSearch }) });
       this.tokenStats = {
         requestEstimate: estimateTokens(content),
         historyEstimate: estimateHistory(this.messages),
