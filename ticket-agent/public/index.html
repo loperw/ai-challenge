@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f4f6f3">
+  <title>RailScout — поиск билетов</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <main class="shell">
+    <header class="topbar">
+      <a class="brand" href="/" aria-label="RailScout, главная">
+        <span class="brand-mark" aria-hidden="true">R</span>
+        <span>RailScout</span>
+      </a>
+      <div class="connection"><span class="connection-dot"></span><span id="service-label">Проверяем подключение…</span></div>
+    </header>
+
+    <section class="intro">
+      <div class="eyebrow"><span class="sparkle">✳</span> Личный помощник по билетам</div>
+      <h1>Найдём билет.<br><span>Сообщим в Telegram.</span></h1>
+      <p>Укажите маршрут и условия — подходящие поезда появятся в списке. Подключите Telegram, чтобы получать уведомления о свободных местах.</p>
+    </section>
+
+    <section class="workspace">
+      <form id="search-form" class="search-form">
+        <div class="section-heading"><span class="step">01</span><div><h2>Маршрут и дата</h2><p>Укажите поездку, которую хотите отслеживать</p></div></div>
+        <label class="field"><span>Как к вам обращаться</span><input name="name" autocomplete="given-name" placeholder="Например, Тамара"></label>
+        <div class="route-fields">
+          <label class="field"><span>Откуда</span><input name="from" required placeholder="Город отправления"></label>
+          <span class="route-arrow" aria-hidden="true">→</span>
+          <label class="field"><span>Куда</span><input name="to" required placeholder="Город прибытия"></label>
+        </div>
+        <label class="field"><span>Дата поездки</span><input name="date" type="date" required></label>
+
+        <div class="section-heading subheading"><span class="step">02</span><div><h2>Ваши условия</h2><p>Агент будет соблюдать каждое из них</p></div></div>
+        <div class="time-fields">
+          <label class="field"><span>Отправление с</span><input name="timeFrom" type="time" value="00:00"></label>
+          <label class="field"><span>Отправление до</span><input name="timeTo" type="time" value="23:59"></label>
+        </div>
+        <fieldset class="field-set">
+          <legend>Подходящие типы мест <span class="optional">можно несколько</span></legend>
+          <div class="type-grid">
+            <label class="choice"><input type="checkbox" name="ticketTypes" value="плацкарт"><span>Плацкарт</span></label>
+            <label class="choice"><input type="checkbox" name="ticketTypes" value="купе"><span>Купе</span></label>
+            <label class="choice"><input type="checkbox" name="ticketTypes" value="сидячий"><span>Сидячий</span></label>
+            <label class="choice"><input type="checkbox" name="ticketTypes" value="СВ"><span>СВ</span></label>
+          </div>
+          <small>Если ничего не выбрать, подойдут любые типы</small>
+        </fieldset>
+        <div class="field-set excluded-set">
+          <div class="legend-row"><span>Исключить время отправления</span><button id="add-exclusion" class="text-button" type="button">+ Добавить период</button></div>
+          <div id="exclusions" class="exclusions"></div>
+          <small>Например, поезд не должен отправляться с 22:00 до 23:30</small>
+        </div>
+
+        <div class="section-heading subheading"><span class="step">03</span><div><h2>Уведомления</h2><p>Можно искать без Telegram ID. Укажите его для уведомлений.</p></div></div>
+        <label class="field"><span>Ваш Telegram ID <span class="optional">необязательно для поиска</span></span><div class="secret-field"><input name="chatId" type="password" inputmode="numeric" autocomplete="off" placeholder="••••••••••"><span aria-hidden="true">⌑</span></div><small>ID не отправляется в DeepSeek и не показывается на экране</small></label>
+        <div class="notification-tools"><label class="field interval-field"><span>Проверять каждые</span><select name="everySeconds"><option value="30">30 секунд</option><option value="60">1 минута</option><option value="120">2 минуты</option><option value="300" selected>5 минут</option><option value="900">15 минут</option><option value="1800">30 минут</option></select></label><button id="telegram-test" class="quiet-button" type="button">Проверить Telegram</button></div>
+
+        <div class="form-actions"><button class="primary-button" type="submit"><span>Найти подходящие билеты</span><span aria-hidden="true">↗</span></button><button id="monitor-start" class="secondary-button" type="button">Начать мониторинг</button></div>
+        <p class="form-note">Мониторинг продолжает работать, пока запущен сервер приложения.</p>
+      </form>
+
+      <aside class="results-panel">
+        <div class="results-head"><div><div class="eyebrow">Результаты агента</div><h2 id="results-title">Здесь появятся поезда</h2></div><span id="result-count" class="count-badge">—</span></div>
+        <p id="results-copy" class="empty-copy">Заполните маршрут и условия, затем запустите поиск. AI объяснит результат и покажет, на какой информации он основан.</p>
+        <div id="agent-answer" class="agent-answer" hidden></div>
+        <div id="train-list" class="train-list"></div>
+        <div id="monitor-card" class="monitor-card" hidden><div><span class="live-dot"></span><strong>Мониторинг активен</strong><p id="monitor-info">Сервер проверяет маршрут</p></div><button id="monitor-stop" class="text-button" type="button">Остановить</button></div>
+        <details id="rag-sources" class="sources" hidden><summary>Справка, найденная через RAG</summary><div id="source-list"></div></details>
+        <div class="agent-note"><span class="ai-icon">✳</span><p><strong>AI помогает искать и следить за билетами</strong><br>DeepSeek подводит итог поиска и объясняет изменения билетов в Telegram. При неизменных результатах мониторинга повторный анализ не запускается.</p></div>
+      </aside>
+    </section>
+    <footer><span>RailScout · прототип AI-агента</span><span>Доступность подтверждает источник билетов</span></footer>
+  </main>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <script type="module" src="/app.js"></script>
+</body>
+</html>
